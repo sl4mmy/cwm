@@ -1,0 +1,4 @@
+*.o
+cwm
+parse.c
+y.tab.h
