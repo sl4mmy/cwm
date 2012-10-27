@@ -32,6 +32,10 @@
 #include <X11/extensions/Xrandr.h>
 #include <X11/keysym.h>
 
+#ifndef __OpenBSD__
+#include "openbsd_compat.h"
+#endif
+
 #undef MIN
 #undef MAX
 #define MIN(x, y) ((x) < (y) ? (x) : (y))
