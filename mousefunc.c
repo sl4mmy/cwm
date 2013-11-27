@@ -16,7 +16,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  *
- * $OpenBSD: mousefunc.c,v 1.57 2013/10/19 18:59:22 okan Exp $
+ * $OpenBSD: mousefunc.c,v 1.59 2013/11/27 18:34:34 okan Exp $
  */
 
 #include <sys/param.h>
@@ -50,21 +50,19 @@ static void
 mousefunc_sweep_draw(struct client_ctx *cc)
 {
 	struct screen_ctx	*sc = cc->sc;
-	char			 asize[14]; /* fits " nnnn x nnnn \0" */
+	char			 s[14]; /* fits " nnnn x nnnn \0" */
 
-	(void)snprintf(asize, sizeof(asize), " %4d x %-4d ",
+	(void)snprintf(s, sizeof(s), " %4d x %-4d ",
 	    (cc->geom.w - cc->hint.basew) / cc->hint.incw,
 	    (cc->geom.h - cc->hint.baseh) / cc->hint.inch);
 
 	XReparentWindow(X_Dpy, sc->menuwin, cc->win, 0, 0);
 	XMoveResizeWindow(X_Dpy, sc->menuwin, 0, 0,
-	    xu_xft_width(sc->xftfont, asize, strlen(asize)),
-	    sc->xftfont->height);
+	    xu_xft_width(sc->xftfont, s, strlen(s)), sc->xftfont->height);
 	XMapWindow(X_Dpy, sc->menuwin);
 	XClearWindow(X_Dpy, sc->menuwin);
 
-	xu_xft_draw(sc, asize, CWM_COLOR_MENU_FONT,
-	    0, sc->xftfont->ascent + 1);
+	xu_xft_draw(sc, s, CWM_COLOR_MENU_FONT, 0, sc->xftfont->ascent + 1);
 }
 
 void
@@ -149,10 +147,10 @@ mousefunc_client_move(struct client_ctx *cc, void *arg)
 
 			cc->geom.x += client_snapcalc(cc->geom.x,
 			    cc->geom.x + cc->geom.w + (cc->bwidth * 2),
-			    sc->work.x, sc->work.w, Conf.snapdist);
+			    sc->work.x, sc->work.w, sc->snapdist);
 			cc->geom.y += client_snapcalc(cc->geom.y,
 			    cc->geom.y + cc->geom.h + (cc->bwidth * 2),
-			    sc->work.y, sc->work.h, Conf.snapdist);
+			    sc->work.y, sc->work.h, sc->snapdist);
 
 			/* don't move more than 60 times / second */
 			if ((ev.xmotion.time - ltime) > (1000 / 60)) {

@@ -15,7 +15,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  *
- * $OpenBSD: conf.c,v 1.148 2013/10/20 01:55:32 okan Exp $
+ * $OpenBSD: conf.c,v 1.150 2013/11/27 18:34:34 okan Exp $
  */
 
 #include <sys/param.h>
@@ -103,6 +103,7 @@ conf_screen(struct screen_ctx *sc)
 	XftColor	 xc;
 
 	sc->gap = Conf.gap;
+	sc->snapdist = Conf.snapdist;
 
 	sc->xftfont = XftFontOpenXlfd(X_Dpy, sc->which, Conf.font);
 	if (sc->xftfont == NULL) {
@@ -479,17 +480,8 @@ conf_bind_kbd(struct conf *c, char *name, char *binding)
 	substring = conf_bind_getmask(name, &mask);
 	current_binding->modmask |= mask;
 
-	if (substring[0] == '[' &&
-	    substring[strlen(substring)-1] == ']') {
-		sscanf(substring, "[%d]", &current_binding->keycode);
-		current_binding->keysym = NoSymbol;
-	} else {
-		current_binding->keycode = 0;
-		current_binding->keysym = XStringToKeysym(substring);
-	}
-
-	if (current_binding->keysym == NoSymbol &&
-	    current_binding->keycode == 0) {
+	current_binding->keysym = XStringToKeysym(substring);
+	if (current_binding->keysym == NoSymbol) {
 		free(current_binding);
 		return;
 	}
@@ -530,9 +522,7 @@ conf_unbind_kbd(struct conf *c, struct keybinding *unbind)
 		if (key->modmask != unbind->modmask)
 			continue;
 
-		if ((key->keycode != 0 && key->keysym == NoSymbol &&
-		    key->keycode == unbind->keycode) ||
-		    key->keysym == unbind->keysym) {
+		if (key->keysym == unbind->keysym) {
 			TAILQ_REMOVE(&c->keybindingq, key, entry);
 			if (key->argtype & ARG_CHAR)
 				free(key->argument.c);
