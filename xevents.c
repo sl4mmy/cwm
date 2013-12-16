@@ -15,7 +15,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  *
- * $OpenBSD: xevents.c,v 1.95 2013/12/02 14:30:12 okan Exp $
+ * $OpenBSD: xevents.c,v 1.100 2013/12/13 14:45:47 okan Exp $
  */
 
 /*
@@ -47,15 +47,15 @@ static void	 xev_handle_buttonpress(XEvent *);
 static void	 xev_handle_buttonrelease(XEvent *);
 static void	 xev_handle_keypress(XEvent *);
 static void	 xev_handle_keyrelease(XEvent *);
-static void	 xev_handle_expose(XEvent *);
 static void	 xev_handle_clientmessage(XEvent *);
 static void	 xev_handle_randr(XEvent *);
 static void	 xev_handle_mappingnotify(XEvent *);
-
+static void	 xev_handle_expose(XEvent *);
 
 void		(*xev_handlers[LASTEvent])(XEvent *) = {
 			[MapRequest] = xev_handle_maprequest,
 			[UnmapNotify] = xev_handle_unmapnotify,
+			[DestroyNotify] = xev_handle_destroynotify,
 			[ConfigureRequest] = xev_handle_configurerequest,
 			[PropertyNotify] = xev_handle_propertynotify,
 			[EnterNotify] = xev_handle_enternotify,
@@ -63,10 +63,9 @@ void		(*xev_handlers[LASTEvent])(XEvent *) = {
 			[ButtonRelease] = xev_handle_buttonrelease,
 			[KeyPress] = xev_handle_keypress,
 			[KeyRelease] = xev_handle_keyrelease,
-			[Expose] = xev_handle_expose,
-			[DestroyNotify] = xev_handle_destroynotify,
 			[ClientMessage] = xev_handle_clientmessage,
 			[MappingNotify] = xev_handle_mappingnotify,
+			[Expose] = xev_handle_expose,
 };
 
 static KeySym modkeys[] = { XK_Alt_L, XK_Alt_R, XK_Super_L, XK_Super_R,
@@ -99,8 +98,7 @@ xev_handle_unmapnotify(XEvent *ee)
 
 	if ((cc = client_find(e->window)) != NULL) {
 		if (e->send_event) {
-			cc->state = WithdrawnState;
-			xu_set_wm_state(cc->win, cc->state);
+			client_set_wm_state(cc, WithdrawnState);
 		} else {
 			if (!(cc->flags & CLIENT_HIDDEN))
 				client_delete(cc);
@@ -187,6 +185,10 @@ xev_handle_propertynotify(XEvent *ee)
 		case XA_WM_NAME:
 			client_setname(cc);
 			break;
+		case XA_WM_HINTS:
+			client_wm_hints(cc);
+			client_draw_border(cc);
+			break;
 		case XA_WM_TRANSIENT_FOR:
 			client_transient(cc);
 			break;
@@ -209,6 +211,8 @@ xev_handle_enternotify(XEvent *ee)
 {
 	XCrossingEvent		*e = &ee->xcrossing;
 	struct client_ctx	*cc;
+
+	Last_Event_Time = e->time;
 
 	if ((cc = client_find(e->window)) != NULL)
 		client_setactive(cc);

@@ -15,7 +15,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  *
- * $OpenBSD: calmwm.h,v 1.230 2013/11/27 18:34:34 okan Exp $
+ * $OpenBSD: calmwm.h,v 1.236 2013/12/13 22:39:13 okan Exp $
  */
 
 #ifndef _CALMWM_H_
@@ -84,6 +84,9 @@
 #define CWM_TILE_HORIZ 		0x0001
 #define CWM_TILE_VERT 		0x0002
 
+#define CWM_GAP			0x0001
+#define CWM_NOGAP		0x0002
+
 union arg {
 	char	*c;
 	int	 i;
@@ -101,6 +104,7 @@ enum cursor_font {
 enum color {
 	CWM_COLOR_BORDER_ACTIVE,
 	CWM_COLOR_BORDER_INACTIVE,
+	CWM_COLOR_BORDER_URGENCY,
 	CWM_COLOR_BORDER_GROUP,
 	CWM_COLOR_BORDER_UNGROUP,
 	CWM_COLOR_MENU_FG,
@@ -166,12 +170,12 @@ struct client_ctx {
 #define CLIENT_INPUT			0x0080
 #define CLIENT_WM_DELETE_WINDOW		0x0100
 #define CLIENT_WM_TAKE_FOCUS		0x0200
+#define CLIENT_URGENCY			0x0400
 
 #define CLIENT_HIGHLIGHT		(CLIENT_GROUP | CLIENT_UNGROUP)
 #define CLIENT_MAXFLAGS			(CLIENT_VMAXIMIZED | CLIENT_HMAXIMIZED)
 #define CLIENT_MAXIMIZED		(CLIENT_VMAXIMIZED | CLIENT_HMAXIMIZED)
 	int			 flags;
-	int			 state;
 	int			 active;
 	int			 stackingorder;
 	struct winname_q	 nameq;
@@ -181,8 +185,8 @@ struct client_ctx {
 	char			*label;
 	char			*matchname;
 	struct group_ctx	*group;
-	char			*app_class;
-	char			*app_name;
+	XClassHint		ch;
+	XWMHints		*wmh;
 };
 TAILQ_HEAD(client_ctx_q, client_ctx);
 TAILQ_HEAD(cycle_entry_q, client_ctx);
@@ -321,6 +325,7 @@ struct mwm_hints {
 #define	MWM_DECOR_BORDER	(1<<1)
 
 extern Display				*X_Dpy;
+extern Time				 Last_Event_Time;
 extern struct screen_ctx_q		 Screenq;
 extern struct client_ctx_q		 Clientq;
 extern struct conf			 Conf;
@@ -354,9 +359,10 @@ enum {
 	_NET_WM_DESKTOP,
 	_NET_CLOSE_WINDOW,
 	_NET_WM_STATE,
-#define	_NET_WM_STATES_NITEMS	2
+#define	_NET_WM_STATES_NITEMS	3
 	_NET_WM_STATE_MAXIMIZED_VERT,
 	_NET_WM_STATE_MAXIMIZED_HORZ,
+	_NET_WM_STATE_DEMANDS_ATTENTION,
 	EWMH_NITEMS
 };
 enum {
@@ -378,6 +384,7 @@ void			 client_delete(struct client_ctx *);
 void			 client_draw_border(struct client_ctx *);
 struct client_ctx	*client_find(Window);
 void			 client_freeze(struct client_ctx *);
+long			 client_get_wm_state(struct client_ctx *);
 void			 client_getsizehints(struct client_ctx *);
 void			 client_hide(struct client_ctx *);
 void			 client_hmaximize(struct client_ctx *);
@@ -385,7 +392,7 @@ void 			 client_htile(struct client_ctx *);
 void			 client_lower(struct client_ctx *);
 void			 client_map(struct client_ctx *);
 void			 client_maximize(struct client_ctx *);
-void			 client_msg(struct client_ctx *, Atom);
+void			 client_msg(struct client_ctx *, Atom, Time);
 void			 client_move(struct client_ctx *);
 struct client_ctx	*client_init(Window, struct screen_ctx *, int);
 void			 client_ptrsave(struct client_ctx *);
@@ -393,14 +400,17 @@ void			 client_ptrwarp(struct client_ctx *);
 void			 client_raise(struct client_ctx *);
 void			 client_resize(struct client_ctx *, int);
 void			 client_send_delete(struct client_ctx *);
+void			 client_set_wm_state(struct client_ctx *, long);
 void			 client_setactive(struct client_ctx *);
 void			 client_setname(struct client_ctx *);
 int			 client_snapcalc(int, int, int, int, int);
 void			 client_transient(struct client_ctx *);
 void			 client_unhide(struct client_ctx *);
+void			 client_urgency(struct client_ctx *);
 void			 client_vmaximize(struct client_ctx *);
 void 			 client_vtile(struct client_ctx *);
 void			 client_warp(struct client_ctx *);
+void			 client_wm_hints(struct client_ctx *);
 
 void			 group_alltoggle(struct screen_ctx *);
 void			 group_autogroup(struct client_ctx *);
@@ -427,7 +437,8 @@ void			 search_match_text(struct menu_q *, struct menu_q *,
 			     char *);
 void			 search_print_client(struct menu *, int);
 
-struct geom		 screen_find_xinerama(struct screen_ctx *, int, int);
+struct geom		 screen_find_xinerama(struct screen_ctx *,
+    			     int, int, int);
 struct screen_ctx	*screen_fromroot(Window);
 void			 screen_init(int);
 void			 screen_update_geometry(struct screen_ctx *);
@@ -513,7 +524,6 @@ void			 xev_loop(void);
 void			 xu_btn_grab(Window, int, u_int);
 void			 xu_btn_ungrab(Window);
 int			 xu_getprop(Window, Atom, Atom, long, unsigned char **);
-int			 xu_get_wm_state(Window, int *);
 int			 xu_getstrprop(Window, Atom, char **);
 void			 xu_key_grab(Window, u_int, KeySym);
 void			 xu_key_ungrab(Window);
@@ -522,7 +532,6 @@ int			 xu_ptr_grab(Window, u_int, Cursor);
 int			 xu_ptr_regrab(u_int, Cursor);
 void			 xu_ptr_setpos(Window, int, int);
 void			 xu_ptr_ungrab(void);
-void			 xu_set_wm_state(Window win, int);
 void			 xu_xft_draw(struct screen_ctx *, const char *,
 			     int, int, int);
 int			 xu_xft_width(XftFont *, const char *, int);

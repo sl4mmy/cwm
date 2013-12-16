@@ -15,7 +15,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  *
- * $OpenBSD: xutil.c,v 1.78 2013/10/20 02:00:02 okan Exp $
+ * $OpenBSD: xutil.c,v 1.80 2013/12/13 14:40:52 okan Exp $
  */
 
 #include <sys/param.h>
@@ -155,33 +155,6 @@ xu_getstrprop(Window win, Atom atm, char **text) {
 	XFree(prop.value);
 
 	return (nitems);
-}
-
-int
-xu_get_wm_state(Window win, int *state)
-{
-	long	*p = NULL;
-
-	if (xu_getprop(win, cwmh[WM_STATE], cwmh[WM_STATE], 2L,
-	    (unsigned char **)&p) <= 0)
-		return (-1);
-
-	*state = (int)*p;
-	XFree((char *)p);
-
-	return (0);
-}
-
-void
-xu_set_wm_state(Window win, int state)
-{
-	long	 dat[2];
-
-	dat[0] = state;
-	dat[1] = None;
-
-	XChangeProperty(X_Dpy, win, cwmh[WM_STATE], cwmh[WM_STATE], 32,
-	    PropModeReplace, (unsigned char *)dat, 2);
 }
 
 /* Root Window Properties */
@@ -360,6 +333,9 @@ xu_ewmh_handle_net_wm_state_msg(struct client_ctx *cc, int action,
 		{ _NET_WM_STATE_MAXIMIZED_HORZ,
 			CLIENT_HMAXIMIZED,
 			client_hmaximize },
+		{ _NET_WM_STATE_DEMANDS_ATTENTION,
+			CLIENT_URGENCY,
+			client_urgency },
 	};
 
 	for (i = 0; i < nitems(handlers); i++) {
@@ -393,6 +369,8 @@ xu_ewmh_restore_net_wm_state(struct client_ctx *cc)
 			client_hmaximize(cc);
 		if (atoms[i] == ewmh[_NET_WM_STATE_MAXIMIZED_VERT])
 			client_vmaximize(cc);
+		if (atoms[i] == ewmh[_NET_WM_STATE_DEMANDS_ATTENTION])
+			client_urgency(cc);
 	}
 	free(atoms);
 }
@@ -407,7 +385,8 @@ xu_ewmh_set_net_wm_state(struct client_ctx *cc)
 	atoms = xcalloc((n + _NET_WM_STATES_NITEMS), sizeof(Atom));
 	for (i = j = 0; i < n; i++) {
 		if (oatoms[i] != ewmh[_NET_WM_STATE_MAXIMIZED_HORZ] &&
-		    oatoms[i] != ewmh[_NET_WM_STATE_MAXIMIZED_VERT])
+		    oatoms[i] != ewmh[_NET_WM_STATE_MAXIMIZED_VERT] &&
+		    oatoms[i] != ewmh[_NET_WM_STATE_DEMANDS_ATTENTION])
 			atoms[j++] = oatoms[i];
 	}
 	free(oatoms);
@@ -415,6 +394,8 @@ xu_ewmh_set_net_wm_state(struct client_ctx *cc)
 		atoms[j++] = ewmh[_NET_WM_STATE_MAXIMIZED_HORZ];
 	if (cc->flags & CLIENT_VMAXIMIZED)
 		atoms[j++] = ewmh[_NET_WM_STATE_MAXIMIZED_VERT];
+	if (cc->flags & CLIENT_URGENCY)
+		atoms[j++] = ewmh[_NET_WM_STATE_DEMANDS_ATTENTION];
 	if (j > 0)
 		XChangeProperty(X_Dpy, cc->win, ewmh[_NET_WM_STATE],
 		    XA_ATOM, 32, PropModeReplace, (unsigned char *)atoms, j);
