@@ -15,7 +15,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  *
- * $OpenBSD: xevents.c,v 1.100 2013/12/13 14:45:47 okan Exp $
+ * $OpenBSD: xevents.c,v 1.104 2014/01/03 15:29:06 okan Exp $
  */
 
 /*
@@ -246,7 +246,7 @@ xev_handle_buttonpress(XEvent *ee)
 		cc->sc = screen_fromroot(e->window);
 	}
 
-	(*mb->callback)(cc, e);
+	(*mb->callback)(cc, &mb->argument);
 }
 
 static void
@@ -265,7 +265,7 @@ xev_handle_keypress(XEvent *ee)
 	struct client_ctx	*cc = NULL, fakecc;
 	struct keybinding	*kb;
 	KeySym			 keysym, skeysym;
-	u_int			 modshift;
+	unsigned int		 modshift;
 
 	keysym = XkbKeycodeToKeysym(X_Dpy, e->keycode, 0, 0);
 	skeysym = XkbKeycodeToKeysym(X_Dpy, e->keycode, 0, 1);
@@ -308,7 +308,7 @@ xev_handle_keyrelease(XEvent *ee)
 	XKeyEvent		*e = &ee->xkey;
 	struct screen_ctx	*sc;
 	KeySym			 keysym;
-	u_int			 i;
+	unsigned int		 i;
 
 	sc = screen_fromroot(e->root);
 
@@ -326,8 +326,11 @@ xev_handle_clientmessage(XEvent *ee)
 {
 	XClientMessageEvent	*e = &ee->xclient;
 	struct client_ctx	*cc, *old_cc;
+	struct screen_ctx       *sc;
 
-	if ((cc = client_find(e->window)) == NULL)
+	sc = screen_fromroot(e->window);
+
+	if ((cc = client_find(e->window)) == NULL && e->window != sc->rootwin)
 		return;
 
 	if (e->message_type == cwmh[WM_CHANGE_STATE] && e->format == 32 &&
@@ -342,9 +345,16 @@ xev_handle_clientmessage(XEvent *ee)
 			client_ptrsave(old_cc);
 		client_ptrwarp(cc);
 	}
+
+	if (e->message_type == ewmh[_NET_WM_DESKTOP] && e->format == 32)
+		group_movetogroup(cc, e->data.l[0]);
+
 	if (e->message_type == ewmh[_NET_WM_STATE] && e->format == 32)
 		xu_ewmh_handle_net_wm_state_msg(cc,
 		    e->data.l[0], e->data.l[1], e->data.l[2]);
+
+	if (e->message_type == ewmh[_NET_CURRENT_DESKTOP] && e->format == 32)
+		group_only(sc, e->data.l[0]);
 }
 
 static void
