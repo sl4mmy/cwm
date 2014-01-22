@@ -15,7 +15,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  *
- * $OpenBSD: calmwm.h,v 1.240 2014/01/03 15:29:06 okan Exp $
+ * $OpenBSD: calmwm.h,v 1.247 2014/01/22 21:48:27 okan Exp $
  */
 
 #ifndef _CALMWM_H_
@@ -86,6 +86,12 @@
 
 #define CWM_GAP			0x0001
 #define CWM_NOGAP		0x0002
+
+#define CWM_WIN			0x0001
+
+#define CWM_QUIT		0x0000
+#define CWM_RUNNING		0x0001
+#define CWM_RESTART		0x0002
 
 union arg {
 	char	*c;
@@ -251,7 +257,6 @@ struct keybinding {
 	union arg		 argument;
 	unsigned int		 modmask;
 	KeySym			 keysym;
-#define KBFLAG_NEEDCLIENT	 0x0001
 	int			 flags;
 	int			 argtype;
 };
@@ -263,17 +268,15 @@ struct mousebinding {
 	union arg			argument;
 	unsigned int			modmask;
 	unsigned int		 	button;
-#define MOUSEBIND_CTX_ROOT		0x0001
-#define MOUSEBIND_CTX_WIN		0x0002
 	int				flags;
 };
 TAILQ_HEAD(mousebinding_q, mousebinding);
 
 struct cmd {
 	TAILQ_ENTRY(cmd)	entry;
-	char			image[MAXPATHLEN];
-#define CMD_MAXLABELLEN		256
-	char			label[CMD_MAXLABELLEN];
+#define CMD_MAXNAMELEN		256
+	char			name[CMD_MAXNAMELEN];
+	char			path[MAXPATHLEN];
 };
 TAILQ_HEAD(cmd_q, cmd);
 
@@ -330,8 +333,9 @@ extern Time				 Last_Event_Time;
 extern struct screen_ctx_q		 Screenq;
 extern struct client_ctx_q		 Clientq;
 extern struct conf			 Conf;
-extern char				*homedir;
+extern const char			*homedir;
 extern int				 HasRandr, Randr_ev;
+extern volatile sig_atomic_t		 cwm_status;
 
 enum {
 	WM_STATE,
@@ -478,11 +482,10 @@ void			 kbfunc_client_search(struct client_ctx *, union arg *);
 void			 kbfunc_client_vmaximize(struct client_ctx *,
 			     union arg *);
 void			 kbfunc_cmdexec(struct client_ctx *, union arg *);
+void			 kbfunc_cwm_status(struct client_ctx *, union arg *);
 void			 kbfunc_exec(struct client_ctx *, union arg *);
 void			 kbfunc_lock(struct client_ctx *, union arg *);
 void			 kbfunc_menu_search(struct client_ctx *, union arg *);
-void			 kbfunc_quit_wm(struct client_ctx *, union arg *);
-void			 kbfunc_restart(struct client_ctx *, union arg *);
 void			 kbfunc_ssh(struct client_ctx *, union arg *);
 void			 kbfunc_term(struct client_ctx *, union arg *);
 void 			 kbfunc_tile(struct client_ctx *, union arg *);
@@ -499,8 +502,6 @@ void			 mousefunc_client_move(struct client_ctx *,
     			    union arg *);
 void			 mousefunc_client_raise(struct client_ctx *,
     			    union arg *);
-void			 mousefunc_client_rcyclegroup(struct client_ctx *,
-    			   union arg *);
 void			 mousefunc_client_resize(struct client_ctx *,
     			    union arg *);
 void			 mousefunc_menu_cmd(struct client_ctx *, union arg *);
@@ -509,28 +510,32 @@ void			 mousefunc_menu_unhide(struct client_ctx *,
     			    union arg *);
 
 struct menu  		*menu_filter(struct screen_ctx *, struct menu_q *,
-			     char *, char *, int,
+			     const char *, const char *, int,
 			     void (*)(struct menu_q *, struct menu_q *, char *),
 			     void (*)(struct menu *, int));
+void			 menuq_add(struct menu_q *, void *, const char *, ...);
 void			 menuq_clear(struct menu_q *);
 
 int			 parse_config(const char *, struct conf *);
 
 void			 conf_atoms(void);
-void			 conf_autogroup(struct conf *, int, char *);
-void			 conf_bind_kbd(struct conf *, char *, char *);
-int			 conf_bind_mouse(struct conf *, char *, char *);
+void			 conf_autogroup(struct conf *, int, const char *);
+int			 conf_bind_kbd(struct conf *, const char *,
+    			     const char *);
+int			 conf_bind_mouse(struct conf *, const char *,
+    			     const char *);
 void			 conf_clear(struct conf *);
 void			 conf_client(struct client_ctx *);
-void			 conf_cmd_add(struct conf *, char *, char *);
+void			 conf_cmd_add(struct conf *, const char *,
+			     const char *);
 void			 conf_cursor(struct conf *);
 void			 conf_grab_kbd(Window);
 void			 conf_grab_mouse(Window);
 void			 conf_init(struct conf *);
-void			 conf_ignore(struct conf *, char *);
+void			 conf_ignore(struct conf *, const char *);
 void			 conf_screen(struct screen_ctx *);
 
-void			 xev_loop(void);
+void			 xev_process(void);
 
 void			 xu_btn_grab(Window, int, unsigned int);
 void			 xu_btn_ungrab(Window);

@@ -15,7 +15,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  *
- * $OpenBSD: xevents.c,v 1.104 2014/01/03 15:29:06 okan Exp $
+ * $OpenBSD: xevents.c,v 1.106 2014/01/22 21:48:27 okan Exp $
  */
 
 /*
@@ -235,11 +235,11 @@ xev_handle_buttonpress(XEvent *ee)
 
 	if (mb == NULL)
 		return;
-	if (mb->flags == MOUSEBIND_CTX_WIN) {
+	if (mb->flags & CWM_WIN) {
 		if (((cc = client_find(e->window)) == NULL) &&
 		    (cc = client_current()) == NULL)
 			return;
-	} else { /* (mb->flags == MOUSEBIND_CTX_ROOT) */
+	} else {
 		if (e->window != e->root)
 			return;
 		cc = &fakecc;
@@ -287,7 +287,7 @@ xev_handle_keypress(XEvent *ee)
 
 	if (kb == NULL)
 		return;
-	if (kb->flags & KBFLAG_NEEDCLIENT) {
+	if (kb->flags & CWM_WIN) {
 		if (((cc = client_find(e->window)) == NULL) &&
 		    (cc = client_current()) == NULL)
 			return;
@@ -400,18 +400,14 @@ xev_handle_expose(XEvent *ee)
 		client_draw_border(cc);
 }
 
-volatile sig_atomic_t	xev_quit = 0;
-
 void
-xev_loop(void)
+xev_process(void)
 {
 	XEvent		 e;
 
-	while (xev_quit == 0) {
-		XNextEvent(X_Dpy, &e);
-		if (e.type - Randr_ev == RRScreenChangeNotify)
-			xev_handle_randr(&e);
-		else if (e.type < LASTEvent && xev_handlers[e.type] != NULL)
-			(*xev_handlers[e.type])(&e);
-	}
+	XNextEvent(X_Dpy, &e);
+	if (e.type - Randr_ev == RRScreenChangeNotify)
+		xev_handle_randr(&e);
+	else if (e.type < LASTEvent && xev_handlers[e.type] != NULL)
+		(*xev_handlers[e.type])(&e);
 }
