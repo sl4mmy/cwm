@@ -15,7 +15,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  *
- * $OpenBSD: calmwm.h,v 1.254 2014/01/30 22:17:22 okan Exp $
+ * $OpenBSD: calmwm.h,v 1.256 2014/02/02 16:29:04 okan Exp $
  */
 
 #ifndef _CALMWM_H_
@@ -225,8 +225,6 @@ TAILQ_HEAD(autogroupwin_q, autogroupwin);
 struct screen_ctx {
 	TAILQ_ENTRY(screen_ctx)	 entry;
 	int			 which;
-	Visual			*visual;
-	Colormap		 colormap;
 	Window			 rootwin;
 	Window			 menuwin;
 	int			 cycling;
@@ -263,10 +261,9 @@ TAILQ_HEAD(keybinding_q, binding);
 TAILQ_HEAD(mousebinding_q, binding);
 
 struct cmd {
-	TAILQ_ENTRY(cmd)	entry;
-#define CMD_MAXNAMELEN		256
-	char			name[CMD_MAXNAMELEN];
-	char			path[MAXPATHLEN];
+	TAILQ_ENTRY(cmd)	 entry;
+	char			*name;
+	char			 path[MAXPATHLEN];
 };
 TAILQ_HEAD(cmd_q, cmd);
 
