@@ -16,7 +16,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  *
- * $OpenBSD: group.c,v 1.87 2014/02/08 02:49:30 okan Exp $
+ * $OpenBSD: group.c,v 1.97 2014/09/01 18:04:58 okan Exp $
  */
 
 #include <sys/param.h>
@@ -33,13 +33,10 @@
 #include "calmwm.h"
 
 static void		 group_assign(struct group_ctx *, struct client_ctx *);
-static void		 group_hide(struct screen_ctx *, struct group_ctx *);
-static void		 group_show(struct screen_ctx *, struct group_ctx *);
-static void		 group_fix_hidden_state(struct group_ctx *);
+static void		 group_restack(struct screen_ctx *, struct group_ctx *);
 static void		 group_setactive(struct screen_ctx *, long);
-static void		 group_set_names(struct screen_ctx *);
 
-const char *shortcut_to_name[] = {
+const char *num_to_name[] = {
 	"nogroup", "one", "two", "three", "four", "five", "six",
 	"seven", "eight", "nine"
 };
@@ -47,63 +44,62 @@ const char *shortcut_to_name[] = {
 static void
 group_assign(struct group_ctx *gc, struct client_ctx *cc)
 {
-	if (gc == NULL)
-		gc = TAILQ_FIRST(&cc->sc->groupq);
-	if (cc->group == gc)
-		return;
-
 	if (cc->group != NULL)
 		TAILQ_REMOVE(&cc->group->clients, cc, group_entry);
 
-	TAILQ_INSERT_TAIL(&gc->clients, cc, group_entry);
 	cc->group = gc;
+
+	if (cc->group != NULL)
+		TAILQ_INSERT_TAIL(&gc->clients, cc, group_entry);
 
 	xu_ewmh_net_wm_desktop(cc);
 }
 
-static void
+void
 group_hide(struct screen_ctx *sc, struct group_ctx *gc)
 {
 	struct client_ctx	*cc;
 
 	screen_updatestackingorder(sc);
 
-	gc->nhidden = 0;
-	gc->highstack = 0;
-	TAILQ_FOREACH(cc, &gc->clients, group_entry) {
+	TAILQ_FOREACH(cc, &gc->clients, group_entry)
 		client_hide(cc);
-		gc->nhidden++;
-		if (cc->stackingorder > gc->highstack)
-			gc->highstack = cc->stackingorder;
-	}
-	gc->hidden = 1;		/* XXX: equivalent to gc->nhidden > 0 */
+}
+
+void
+group_show(struct screen_ctx *sc, struct group_ctx *gc)
+{
+	struct client_ctx	*cc;
+
+	TAILQ_FOREACH(cc, &gc->clients, group_entry)
+		client_unhide(cc);
+
+	group_restack(sc, gc);
+	group_setactive(sc, gc->num);
 }
 
 static void
-group_show(struct screen_ctx *sc, struct group_ctx *gc)
+group_restack(struct screen_ctx *sc, struct group_ctx *gc)
 {
 	struct client_ctx	*cc;
 	Window			*winlist;
 	int			 i, lastempty = -1;
+	int			 nwins = 0, highstack = 0;
 
-	gc->highstack = 0;
 	TAILQ_FOREACH(cc, &gc->clients, group_entry) {
-		if (cc->stackingorder > gc->highstack)
-			gc->highstack = cc->stackingorder;
+		if (cc->stackingorder > highstack)
+			highstack = cc->stackingorder;
 	}
-	winlist = xcalloc((gc->highstack + 1), sizeof(*winlist));
+	winlist = xcalloc((highstack + 1), sizeof(*winlist));
 
-	/*
-	 * Invert the stacking order as XRestackWindows() expects them
-	 * top-to-bottom.
-	 */
+	/* Invert the stacking order for XRestackWindows(). */
 	TAILQ_FOREACH(cc, &gc->clients, group_entry) {
-		winlist[gc->highstack - cc->stackingorder] = cc->win;
-		client_unhide(cc);
+		winlist[highstack - cc->stackingorder] = cc->win;
+		nwins++;
 	}
 
 	/* Un-sparseify */
-	for (i = 0; i <= gc->highstack; i++) {
+	for (i = 0; i <= highstack; i++) {
 		if (!winlist[i] && lastempty == -1)
 			lastempty = i;
 		else if (winlist[i] && lastempty != -1) {
@@ -113,11 +109,8 @@ group_show(struct screen_ctx *sc, struct group_ctx *gc)
 		}
 	}
 
-	XRestackWindows(X_Dpy, winlist, gc->nhidden);
+	XRestackWindows(X_Dpy, winlist, nwins);
 	free(winlist);
-
-	gc->hidden = 0;
-	group_setactive(sc, gc->shortcut);
 }
 
 void
@@ -135,8 +128,7 @@ group_init(struct screen_ctx *sc)
 
 	for (i = 0; i < CALMWM_NGROUPS; i++) {
 		TAILQ_INIT(&sc->groups[i].clients);
-		sc->groups[i].hidden = 0;
-		sc->groups[i].shortcut = i;
+		sc->groups[i].num = i;
 		TAILQ_INSERT_TAIL(&sc->groupq, &sc->groups[i], entry);
 	}
 
@@ -146,15 +138,6 @@ group_init(struct screen_ctx *sc)
 	xu_ewmh_net_virtual_roots(sc);
 
 	group_setactive(sc, 1);
-}
-
-void
-group_set_state(struct screen_ctx *sc)
-{
-	struct group_ctx	*gc;
-
-	TAILQ_FOREACH(gc, &sc->groupq, entry)
-		group_fix_hidden_state(gc);
 }
 
 static void
@@ -175,12 +158,11 @@ group_movetogroup(struct client_ctx *cc, int idx)
 		errx(1, "group_movetogroup: index out of range (%d)", idx);
 
 	gc = &sc->groups[idx];
+
 	if (cc->group == gc)
 		return;
-	if (gc->hidden) {
+	if (group_hidden_state(gc))
 		client_hide(cc);
-		gc->nhidden++;
-	}
 	group_assign(gc, cc);
 }
 
@@ -212,21 +194,25 @@ group_sticky_toggle_exit(struct client_ctx *cc)
 }
 
 /*
- * if group_hidetoggle would produce no effect, toggle the group's hidden state
+ * If all clients in a group are hidden, then the group state is hidden.
  */
-static void
-group_fix_hidden_state(struct group_ctx *gc)
+int
+group_hidden_state(struct group_ctx *gc)
 {
 	struct client_ctx	*cc;
-	int			 same = 0;
+	int			 hidden = 0, same = 0;
 
 	TAILQ_FOREACH(cc, &gc->clients, group_entry) {
-		if (gc->hidden == ((cc->flags & CLIENT_HIDDEN) ? 1 : 0))
+		if (cc->flags & CLIENT_STICKY)
+			continue;
+		if (hidden == ((cc->flags & CLIENT_HIDDEN) ? 1 : 0))
 			same++;
 	}
 
 	if (same == 0)
-		gc->hidden = !gc->hidden;
+		hidden = !hidden;
+
+	return(hidden);
 }
 
 void
@@ -238,9 +224,8 @@ group_hidetoggle(struct screen_ctx *sc, int idx)
 		errx(1, "group_hidetoggle: index out of range (%d)", idx);
 
 	gc = &sc->groups[idx];
-	group_fix_hidden_state(gc);
 
-	if (gc->hidden)
+	if (group_hidden_state(gc))
 		group_show(sc, gc);
 	else {
 		group_hide(sc, gc);
@@ -259,7 +244,7 @@ group_only(struct screen_ctx *sc, int idx)
 		errx(1, "group_only: index out of range (%d)", idx);
 
 	TAILQ_FOREACH(gc, &sc->groupq, entry) {
-		if (gc->shortcut == idx)
+		if (gc->num == idx)
 			group_show(sc, gc);
 		else
 			group_hide(sc, gc);
@@ -288,7 +273,7 @@ group_cycle(struct screen_ctx *sc, int flags)
 
 		if (!TAILQ_EMPTY(&gc->clients) && showgroup == NULL)
 			showgroup = gc;
-		else if (!gc->hidden)
+		else if (!group_hidden_state(gc))
 			group_hide(sc, gc);
 	}
 
@@ -297,39 +282,10 @@ group_cycle(struct screen_ctx *sc, int flags)
 
 	group_hide(sc, sc->group_active);
 
-	if (showgroup->hidden)
+	if (group_hidden_state(showgroup))
 		group_show(sc, showgroup);
 	else
-		group_setactive(sc, showgroup->shortcut);
-}
-
-void
-group_menu(struct screen_ctx *sc)
-{
-	struct group_ctx	*gc;
-	struct menu		*mi;
-	struct menu_q		 menuq;
-
-	TAILQ_INIT(&menuq);
-
-	TAILQ_FOREACH(gc, &sc->groupq, entry) {
-		if (TAILQ_EMPTY(&gc->clients))
-			continue;
-
-		menuq_add(&menuq, gc, gc->hidden ? "%d: [%s]" : "%d: %s",
-		    gc->shortcut, sc->group_names[gc->shortcut]);
-	}
-
-	if (TAILQ_EMPTY(&menuq))
-		return;
-
-	mi = menu_filter(sc, &menuq, NULL, NULL, 0, NULL, NULL);
-	if (mi != NULL && mi->ctx != NULL) {
-		gc = (struct group_ctx *)mi->ctx;
-		(gc->hidden) ? group_show(sc, gc) : group_hide(sc, gc);
-	}
-
-	menuq_clear(&menuq);
+		group_setactive(sc, showgroup->num);
 }
 
 void
@@ -352,36 +308,38 @@ group_autogroup(struct client_ctx *cc)
 	struct screen_ctx	*sc = cc->sc;
 	struct autogroupwin	*aw;
 	struct group_ctx	*gc;
-	int			 no = -1, both_match = 0;
-	long			*grpno;
+	int			 num = -2, both_match = 0;
+	long			*grpnum;
 
 	if (cc->ch.res_class == NULL || cc->ch.res_name == NULL)
 		return;
 
 	if (xu_getprop(cc->win, ewmh[_NET_WM_DESKTOP],
-	    XA_CARDINAL, 1, (unsigned char **)&grpno) > 0) {
-		if (*grpno == -1)
-			no = 0;
-		else if (*grpno > CALMWM_NGROUPS || *grpno < 0)
-			no = CALMWM_NGROUPS - 1;
-		else
-			no = *grpno;
-		XFree(grpno);
+	    XA_CARDINAL, 1, (unsigned char **)&grpnum) > 0) {
+		num = *grpnum;
+		if (num > CALMWM_NGROUPS || num < -1)
+			num = CALMWM_NGROUPS - 1;
+		XFree(grpnum);
 	} else {
 		TAILQ_FOREACH(aw, &Conf.autogroupq, entry) {
 			if (strcmp(aw->class, cc->ch.res_class) == 0) {
 				if ((aw->name != NULL) &&
 				    (strcmp(aw->name, cc->ch.res_name) == 0)) {
-					no = aw->num;
+					num = aw->num;
 					both_match = 1;
 				} else if (aw->name == NULL && !both_match)
-					no = aw->num;
+					num = aw->num;
 			}
 		}
 	}
 
+	if ((num == -1) || (num == 0)) {
+		group_assign(NULL, cc);
+		return;
+	}
+
 	TAILQ_FOREACH(gc, &sc->groupq, entry) {
-		if (gc->shortcut == no) {
+		if (gc->num == num) {
 			group_assign(gc, cc);
 			return;
 		}
@@ -425,7 +383,7 @@ group_update_names(struct screen_ctx *sc)
 		setnames = 1;
 		i = 0;
 		while (n < CALMWM_NGROUPS)
-			strings[n++] = xstrdup(shortcut_to_name[i++]);
+			strings[n++] = xstrdup(num_to_name[i++]);
 	}
 
 	if (prop_ret != NULL)
@@ -435,28 +393,7 @@ group_update_names(struct screen_ctx *sc)
 
 	sc->group_names = strings;
 	sc->group_nonames = n;
+
 	if (setnames)
-		group_set_names(sc);
-}
-
-static void
-group_set_names(struct screen_ctx *sc)
-{
-	char		*p, *q;
-	size_t		 len = 0, tlen, slen;
-	int		 i;
-
-	for (i = 0; i < sc->group_nonames; i++)
-		len += strlen(sc->group_names[i]) + 1;
-	q = p = xcalloc(len, sizeof(*p));
-
-	tlen = len;
-	for (i = 0; i < sc->group_nonames; i++) {
-		slen = strlen(sc->group_names[i]) + 1;
-		(void)strlcpy(q, sc->group_names[i], tlen);
-		tlen -= slen;
-		q += slen;
-	}
-
-	xu_ewmh_net_desktop_names(sc, p, len);
+		xu_ewmh_net_desktop_names(sc);
 }

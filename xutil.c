@@ -15,7 +15,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  *
- * $OpenBSD: xutil.c,v 1.85 2014/02/27 00:52:57 okan Exp $
+ * $OpenBSD: xutil.c,v 1.89 2014/08/25 14:31:22 okan Exp $
  */
 
 #include <sys/param.h>
@@ -281,20 +281,39 @@ xu_ewmh_net_current_desktop(struct screen_ctx *sc, long idx)
 }
 
 void
-xu_ewmh_net_desktop_names(struct screen_ctx *sc, char *data, int n)
+xu_ewmh_net_desktop_names(struct screen_ctx *sc)
 {
+	char		*p, *q;
+	size_t		 len = 0, tlen, slen;
+	int		 i;
+
+	for (i = 0; i < sc->group_nonames; i++)
+		len += strlen(sc->group_names[i]) + 1;
+	q = p = xcalloc(len, sizeof(*p));
+
+	tlen = len;
+	for (i = 0; i < sc->group_nonames; i++) {
+		slen = strlen(sc->group_names[i]) + 1;
+		(void)strlcpy(q, sc->group_names[i], tlen);
+		tlen -= slen;
+		q += slen;
+	}
+
 	XChangeProperty(X_Dpy, sc->rootwin, ewmh[_NET_DESKTOP_NAMES],
-	    cwmh[UTF8_STRING], 8, PropModeReplace, (unsigned char *)data, n);
+	    cwmh[UTF8_STRING], 8, PropModeReplace, (unsigned char *)p, len);
 }
 
 /* Application Window Properties */
 void
 xu_ewmh_net_wm_desktop(struct client_ctx *cc)
 {
-	long	 no = cc->group->shortcut;
+	long	 num = 0xffffffff;
+
+	if (cc->group)
+		num = cc->group->num;
 
 	XChangeProperty(X_Dpy, cc->win, ewmh[_NET_WM_DESKTOP],
-	    XA_CARDINAL, 32, PropModeReplace, (unsigned char *)&no, 1);
+	    XA_CARDINAL, 32, PropModeReplace, (unsigned char *)&num, 1);
 }
 
 Atom *
@@ -323,6 +342,9 @@ xu_ewmh_handle_net_wm_state_msg(struct client_ctx *cc, int action,
 		int property;
 		void (*toggle)(struct client_ctx *);
 	} handlers[] = {
+		{ _NET_WM_STATE_STICKY,
+			CLIENT_STICKY,
+			client_sticky },
 		{ _NET_WM_STATE_MAXIMIZED_VERT,
 			CLIENT_VMAXIMIZED,
 			client_vmaximize },
@@ -364,6 +386,8 @@ xu_ewmh_restore_net_wm_state(struct client_ctx *cc)
 
 	atoms = xu_ewmh_get_net_wm_state(cc, &n);
 	for (i = 0; i < n; i++) {
+		if (atoms[i] == ewmh[_NET_WM_STATE_STICKY])
+			client_sticky(cc);
 		if (atoms[i] == ewmh[_NET_WM_STATE_MAXIMIZED_HORZ])
 			client_hmaximize(cc);
 		if (atoms[i] == ewmh[_NET_WM_STATE_MAXIMIZED_VERT])
@@ -388,10 +412,13 @@ xu_ewmh_set_net_wm_state(struct client_ctx *cc)
 		if (oatoms[i] != ewmh[_NET_WM_STATE_MAXIMIZED_HORZ] &&
 		    oatoms[i] != ewmh[_NET_WM_STATE_MAXIMIZED_VERT] &&
 		    oatoms[i] != ewmh[_NET_WM_STATE_FULLSCREEN] &&
+		    oatoms[i] != ewmh[_NET_WM_STATE_STICKY] &&
 		    oatoms[i] != ewmh[_NET_WM_STATE_DEMANDS_ATTENTION])
 			atoms[j++] = oatoms[i];
 	}
 	free(oatoms);
+	if (cc->flags & CLIENT_STICKY)
+		atoms[j++] = ewmh[_NET_WM_STATE_STICKY];
 	if (cc->flags & CLIENT_FULLSCREEN)
 		atoms[j++] = ewmh[_NET_WM_STATE_FULLSCREEN];
 	else {
