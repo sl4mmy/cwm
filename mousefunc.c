@@ -16,7 +16,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  *
- * $OpenBSD: mousefunc.c,v 1.76 2014/09/02 14:08:39 okan Exp $
+ * $OpenBSD: mousefunc.c,v 1.80 2014/09/08 21:15:14 okan Exp $
  */
 
 #include <sys/param.h>
@@ -188,11 +188,11 @@ mousefunc_menu_group(struct client_ctx *cc, union arg *arg)
 
 	TAILQ_INIT(&menuq);
 	TAILQ_FOREACH(gc, &sc->groupq, entry) {
-		if (TAILQ_EMPTY(&gc->clients))
+		if (TAILQ_EMPTY(&gc->clientq))
 			continue;
 		menuq_add(&menuq, gc,
 		    group_hidden_state(gc) ? "%d: [%s]" : "%d: %s",
-		    gc->num, sc->group_names[gc->num]);
+		    gc->num, gc->name);
 	}
 	if (TAILQ_EMPTY(&menuq))
 		return;
@@ -201,7 +201,7 @@ mousefunc_menu_group(struct client_ctx *cc, union arg *arg)
 	    NULL, NULL)) != NULL) {
 		gc = (struct group_ctx *)mi->ctx;
 		(group_hidden_state(gc)) ?
-		    group_show(sc, gc) : group_hide(sc, gc);
+		    group_show(gc) : group_hide(gc);
 	}
 
 	menuq_clear(&menuq);
@@ -219,7 +219,7 @@ mousefunc_menu_unhide(struct client_ctx *cc, union arg *arg)
 	old_cc = client_current();
 
 	TAILQ_INIT(&menuq);
-	TAILQ_FOREACH(cc, &Clientq, entry) {
+	TAILQ_FOREACH(cc, &sc->clientq, entry) {
 		if (cc->flags & CLIENT_HIDDEN) {
 			wname = (cc->label) ? cc->label : cc->name;
 			if (wname == NULL)

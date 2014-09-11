@@ -15,7 +15,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  *
- * $OpenBSD: xutil.c,v 1.89 2014/08/25 14:31:22 okan Exp $
+ * $OpenBSD: xutil.c,v 1.92 2014/09/08 20:11:22 okan Exp $
  */
 
 #include <sys/param.h>
@@ -74,7 +74,7 @@ xu_key_ungrab(Window win)
 int
 xu_ptr_grab(Window win, unsigned int mask, Cursor curs)
 {
-	return (XGrabPointer(X_Dpy, win, False, mask,
+	return(XGrabPointer(X_Dpy, win, False, mask,
 	    GrabModeAsync, GrabModeAsync,
 	    None, curs, CurrentTime) == GrabSuccess ? 0 : -1);
 }
@@ -82,7 +82,7 @@ xu_ptr_grab(Window win, unsigned int mask, Cursor curs)
 int
 xu_ptr_regrab(unsigned int mask, Cursor curs)
 {
-	return (XChangeActivePointerGrab(X_Dpy, mask,
+	return(XChangeActivePointerGrab(X_Dpy, mask,
 	    curs, CurrentTime) == GrabSuccess ? 0 : -1);
 }
 
@@ -117,12 +117,12 @@ xu_getprop(Window win, Atom atm, Atom type, long len, unsigned char **p)
 
 	if (XGetWindowProperty(X_Dpy, win, atm, 0L, len, False, type,
 	    &realtype, &format, &n, &extra, p) != Success || *p == NULL)
-		return (-1);
+		return(-1);
 
 	if (n == 0)
 		XFree(*p);
 
-	return (n);
+	return(n);
 }
 
 int
@@ -135,7 +135,7 @@ xu_getstrprop(Window win, Atom atm, char **text) {
 
 	XGetTextProperty(X_Dpy, win, &prop, atm);
 	if (!prop.nitems)
-		return (0);
+		return(0);
 
 	if (Xutf8TextPropertyToTextList(X_Dpy, &prop, &list,
 	    &nitems) == Success && nitems > 0 && *list) {
@@ -154,7 +154,7 @@ xu_getstrprop(Window win, Atom atm, char **text) {
 
 	XFree(prop.value);
 
-	return (nitems);
+	return(nitems);
 }
 
 /* Root Window Properties */
@@ -214,13 +214,13 @@ xu_ewmh_net_client_list(struct screen_ctx *sc)
 	Window			*winlist;
 	int			 i = 0, j = 0;
 
-	TAILQ_FOREACH(cc, &Clientq, entry)
+	TAILQ_FOREACH(cc, &sc->clientq, entry)
 		i++;
 	if (i == 0)
 		return;
 
 	winlist = xcalloc(i, sizeof(*winlist));
-	TAILQ_FOREACH(cc, &Clientq, entry)
+	TAILQ_FOREACH(cc, &sc->clientq, entry)
 		winlist[j++] = cc->win;
 	XChangeProperty(X_Dpy, sc->rootwin, ewmh[_NET_CLIENT_LIST],
 	    XA_WINDOW, 32, PropModeReplace, (unsigned char *)winlist, i);
@@ -283,18 +283,46 @@ xu_ewmh_net_current_desktop(struct screen_ctx *sc, long idx)
 void
 xu_ewmh_net_desktop_names(struct screen_ctx *sc)
 {
-	char		*p, *q;
-	size_t		 len = 0, tlen, slen;
-	int		 i;
+	struct group_ctx	*gc;
+	char			*p, *q;
+	unsigned char		*prop_ret;
+	int			 i = 0, j = 0, nstrings = 0, n = 0;
+	size_t			 len = 0, tlen, slen;
 
-	for (i = 0; i < sc->group_nonames; i++)
-		len += strlen(sc->group_names[i]) + 1;
+	/* Let group names be overwritten if _NET_DESKTOP_NAMES is set. */
+
+	if ((j = xu_getprop(sc->rootwin, ewmh[_NET_DESKTOP_NAMES],
+	    cwmh[UTF8_STRING], 0xffffff, (unsigned char **)&prop_ret)) > 0) {
+		prop_ret[j - 1] = '\0'; /* paranoia */
+		while (i < j) {
+			if (prop_ret[i++] == '\0')
+				nstrings++;
+		}
+	}
+
+	p = (char *)prop_ret;
+	while (n < nstrings) {
+		TAILQ_FOREACH(gc, &sc->groupq, entry) {
+			if (gc->num == n) {
+				free(gc->name);
+				gc->name = xstrdup(p);
+				p += strlen(p) + 1;
+				break;
+			}
+		}
+		n++;
+	}
+	if (prop_ret != NULL)
+		XFree(prop_ret);
+
+	TAILQ_FOREACH(gc, &sc->groupq, entry)
+		len += strlen(gc->name) + 1;
 	q = p = xcalloc(len, sizeof(*p));
 
 	tlen = len;
-	for (i = 0; i < sc->group_nonames; i++) {
-		slen = strlen(sc->group_names[i]) + 1;
-		(void)strlcpy(q, sc->group_names[i], tlen);
+	TAILQ_FOREACH(gc, &sc->groupq, entry) {
+		slen = strlen(gc->name) + 1;
+		(void)strlcpy(q, gc->name, tlen);
 		tlen -= slen;
 		q += slen;
 	}
@@ -323,13 +351,13 @@ xu_ewmh_get_net_wm_state(struct client_ctx *cc, int *n)
 
 	if ((*n = xu_getprop(cc->win, ewmh[_NET_WM_STATE], XA_ATOM, 64L,
 	    (unsigned char **)&p)) <= 0)
-		return (NULL);
+		return(NULL);
 
 	state = xcalloc(*n, sizeof(Atom));
 	(void)memcpy(state, p, *n * sizeof(Atom));
 	XFree((char *)p);
 
-	return (state);
+	return(state);
 }
 
 void
@@ -455,7 +483,7 @@ xu_xft_width(XftFont *xftfont, const char *text, int len)
 	XftTextExtentsUtf8(X_Dpy, xftfont, (const FcChar8*)text,
 	    len, &extents);
 
-	return (extents.xOff);
+	return(extents.xOff);
 }
 
 void

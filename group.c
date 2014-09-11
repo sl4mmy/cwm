@@ -16,7 +16,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  *
- * $OpenBSD: group.c,v 1.97 2014/09/01 18:04:58 okan Exp $
+ * $OpenBSD: group.c,v 1.102 2014/09/08 21:15:14 okan Exp $
  */
 
 #include <sys/param.h>
@@ -33,7 +33,7 @@
 #include "calmwm.h"
 
 static void		 group_assign(struct group_ctx *, struct client_ctx *);
-static void		 group_restack(struct screen_ctx *, struct group_ctx *);
+static void		 group_restack(struct group_ctx *);
 static void		 group_setactive(struct screen_ctx *, long);
 
 const char *num_to_name[] = {
@@ -45,55 +45,55 @@ static void
 group_assign(struct group_ctx *gc, struct client_ctx *cc)
 {
 	if (cc->group != NULL)
-		TAILQ_REMOVE(&cc->group->clients, cc, group_entry);
+		TAILQ_REMOVE(&cc->group->clientq, cc, group_entry);
 
 	cc->group = gc;
 
 	if (cc->group != NULL)
-		TAILQ_INSERT_TAIL(&gc->clients, cc, group_entry);
+		TAILQ_INSERT_TAIL(&gc->clientq, cc, group_entry);
 
 	xu_ewmh_net_wm_desktop(cc);
 }
 
 void
-group_hide(struct screen_ctx *sc, struct group_ctx *gc)
+group_hide(struct group_ctx *gc)
 {
 	struct client_ctx	*cc;
 
-	screen_updatestackingorder(sc);
+	screen_updatestackingorder(gc->sc);
 
-	TAILQ_FOREACH(cc, &gc->clients, group_entry)
+	TAILQ_FOREACH(cc, &gc->clientq, group_entry)
 		client_hide(cc);
 }
 
 void
-group_show(struct screen_ctx *sc, struct group_ctx *gc)
+group_show(struct group_ctx *gc)
 {
 	struct client_ctx	*cc;
 
-	TAILQ_FOREACH(cc, &gc->clients, group_entry)
+	TAILQ_FOREACH(cc, &gc->clientq, group_entry)
 		client_unhide(cc);
 
-	group_restack(sc, gc);
-	group_setactive(sc, gc->num);
+	group_restack(gc);
+	group_setactive(gc->sc, gc->num);
 }
 
 static void
-group_restack(struct screen_ctx *sc, struct group_ctx *gc)
+group_restack(struct group_ctx *gc)
 {
 	struct client_ctx	*cc;
 	Window			*winlist;
 	int			 i, lastempty = -1;
 	int			 nwins = 0, highstack = 0;
 
-	TAILQ_FOREACH(cc, &gc->clients, group_entry) {
+	TAILQ_FOREACH(cc, &gc->clientq, group_entry) {
 		if (cc->stackingorder > highstack)
 			highstack = cc->stackingorder;
 	}
 	winlist = xcalloc((highstack + 1), sizeof(*winlist));
 
 	/* Invert the stacking order for XRestackWindows(). */
-	TAILQ_FOREACH(cc, &gc->clients, group_entry) {
+	TAILQ_FOREACH(cc, &gc->clientq, group_entry) {
 		winlist[highstack - cc->stackingorder] = cc->win;
 		nwins++;
 	}
@@ -116,22 +116,22 @@ group_restack(struct screen_ctx *sc, struct group_ctx *gc)
 void
 group_init(struct screen_ctx *sc)
 {
-	int	 i;
+	struct group_ctx	*gc;
+	int			 i;
 
 	TAILQ_INIT(&sc->groupq);
 	sc->group_hideall = 0;
-	/*
-	 * See if any group names have already been set and update the
-	 * property with ours if they'll have changed.
-	 */
-	group_update_names(sc);
 
 	for (i = 0; i < CALMWM_NGROUPS; i++) {
-		TAILQ_INIT(&sc->groups[i].clients);
-		sc->groups[i].num = i;
-		TAILQ_INSERT_TAIL(&sc->groupq, &sc->groups[i], entry);
+		gc = xcalloc(1, sizeof(*gc));
+		gc->sc = sc;
+		TAILQ_INIT(&gc->clientq);
+		gc->name = xstrdup(num_to_name[i]);
+		gc->num = i;
+		TAILQ_INSERT_TAIL(&sc->groupq, gc, entry);
 	}
 
+	xu_ewmh_net_desktop_names(sc);
 	xu_ewmh_net_wm_desktop_viewport(sc);
 	xu_ewmh_net_wm_number_of_desktops(sc);
 	xu_ewmh_net_showing_desktop(sc);
@@ -143,7 +143,13 @@ group_init(struct screen_ctx *sc)
 static void
 group_setactive(struct screen_ctx *sc, long idx)
 {
-	sc->group_active = &sc->groups[idx];
+	struct group_ctx	*gc;
+
+	TAILQ_FOREACH(gc, &sc->groupq, entry) {
+		if (gc->num == idx)
+			break;
+	}
+	sc->group_active = gc;
 
 	xu_ewmh_net_current_desktop(sc, idx);
 }
@@ -157,7 +163,10 @@ group_movetogroup(struct client_ctx *cc, int idx)
 	if (idx < 0 || idx >= CALMWM_NGROUPS)
 		errx(1, "group_movetogroup: index out of range (%d)", idx);
 
-	gc = &sc->groups[idx];
+	TAILQ_FOREACH(gc, &sc->groupq, entry) {
+		if (gc->num == idx)
+			break;
+	}
 
 	if (cc->group == gc)
 		return;
@@ -202,7 +211,7 @@ group_hidden_state(struct group_ctx *gc)
 	struct client_ctx	*cc;
 	int			 hidden = 0, same = 0;
 
-	TAILQ_FOREACH(cc, &gc->clients, group_entry) {
+	TAILQ_FOREACH(cc, &gc->clientq, group_entry) {
 		if (cc->flags & CLIENT_STICKY)
 			continue;
 		if (hidden == ((cc->flags & CLIENT_HIDDEN) ? 1 : 0))
@@ -223,14 +232,17 @@ group_hidetoggle(struct screen_ctx *sc, int idx)
 	if (idx < 0 || idx >= CALMWM_NGROUPS)
 		errx(1, "group_hidetoggle: index out of range (%d)", idx);
 
-	gc = &sc->groups[idx];
+	TAILQ_FOREACH(gc, &sc->groupq, entry) {
+		if (gc->num == idx)
+			break;
+	}
 
 	if (group_hidden_state(gc))
-		group_show(sc, gc);
+		group_show(gc);
 	else {
-		group_hide(sc, gc);
+		group_hide(gc);
 		/* make clients stick to empty group */
-		if (TAILQ_EMPTY(&gc->clients))
+		if (TAILQ_EMPTY(&gc->clientq))
 			group_setactive(sc, idx);
 	}
 }
@@ -245,9 +257,9 @@ group_only(struct screen_ctx *sc, int idx)
 
 	TAILQ_FOREACH(gc, &sc->groupq, entry) {
 		if (gc->num == idx)
-			group_show(sc, gc);
+			group_show(gc);
 		else
-			group_hide(sc, gc);
+			group_hide(gc);
 	}
 }
 
@@ -271,19 +283,19 @@ group_cycle(struct screen_ctx *sc, int flags)
 		if (gc == sc->group_active)
 			break;
 
-		if (!TAILQ_EMPTY(&gc->clients) && showgroup == NULL)
+		if (!TAILQ_EMPTY(&gc->clientq) && showgroup == NULL)
 			showgroup = gc;
 		else if (!group_hidden_state(gc))
-			group_hide(sc, gc);
+			group_hide(gc);
 	}
 
 	if (showgroup == NULL)
 		return;
 
-	group_hide(sc, sc->group_active);
+	group_hide(sc->group_active);
 
 	if (group_hidden_state(showgroup))
-		group_show(sc, showgroup);
+		group_show(showgroup);
 	else
 		group_setactive(sc, showgroup->num);
 }
@@ -295,9 +307,9 @@ group_alltoggle(struct screen_ctx *sc)
 
 	TAILQ_FOREACH(gc, &sc->groupq, entry) {
 		if (sc->group_hideall)
-			group_show(sc, gc);
+			group_show(gc);
 		else
-			group_hide(sc, gc);
+			group_hide(gc);
 	}
 	sc->group_hideall = !sc->group_hideall;
 }
@@ -349,51 +361,4 @@ group_autogroup(struct client_ctx *cc)
 		group_assign(sc->group_active, cc);
 	else
 		group_assign(NULL, cc);
-}
-
-void
-group_update_names(struct screen_ctx *sc)
-{
-	char		**strings, *p;
-	unsigned char	*prop_ret;
-	int		 i = 0, j = 0, nstrings = 0, n = 0, setnames = 0;
-
-	if ((j = xu_getprop(sc->rootwin, ewmh[_NET_DESKTOP_NAMES],
-	    cwmh[UTF8_STRING], 0xffffff, (unsigned char **)&prop_ret)) > 0) {
-		prop_ret[j - 1] = '\0'; /* paranoia */
-		while (i < j) {
-			if (prop_ret[i++] == '\0')
-				nstrings++;
-		}
-	}
-
-	strings = xcalloc((nstrings < CALMWM_NGROUPS ? CALMWM_NGROUPS :
-	    nstrings), sizeof(*strings));
-
-	p = (char *)prop_ret;
-	while (n < nstrings) {
-		strings[n++] = xstrdup(p);
-		p += strlen(p) + 1;
-	}
-	/*
-	 * make sure we always set our defaults if nothing is there to
-	 * replace them.
-	 */
-	if (n < CALMWM_NGROUPS) {
-		setnames = 1;
-		i = 0;
-		while (n < CALMWM_NGROUPS)
-			strings[n++] = xstrdup(num_to_name[i++]);
-	}
-
-	if (prop_ret != NULL)
-		XFree(prop_ret);
-	if (sc->group_nonames != 0)
-		free(sc->group_names);
-
-	sc->group_names = strings;
-	sc->group_nonames = n;
-
-	if (setnames)
-		xu_ewmh_net_desktop_names(sc);
 }

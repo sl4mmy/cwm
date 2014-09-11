@@ -15,7 +15,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  *
- * $OpenBSD: kbfunc.c,v 1.97 2014/09/01 18:17:32 okan Exp $
+ * $OpenBSD: kbfunc.c,v 1.101 2014/09/11 16:06:26 okan Exp $
  */
 
 #include <sys/param.h>
@@ -151,7 +151,7 @@ kbfunc_client_search(struct client_ctx *cc, union arg *arg)
 	old_cc = client_current();
 
 	TAILQ_INIT(&menuq);
-	TAILQ_FOREACH(cc, &Clientq, entry)
+	TAILQ_FOREACH(cc, &sc->clientq, entry)
 		menuq_add(&menuq, cc, "%s", cc->name);
 
 	if ((mi = menu_filter(sc, &menuq, "window", NULL, 0,
@@ -213,13 +213,23 @@ kbfunc_cmdexec(struct client_ctx *cc, union arg *arg)
 void
 kbfunc_term(struct client_ctx *cc, union arg *arg)
 {
-	u_spawn(Conf.termpath);
+	struct cmd *cmd;
+
+	TAILQ_FOREACH(cmd, &Conf.cmdq, entry) {
+		if (strcmp(cmd->name, "term") == 0)
+			u_spawn(cmd->path);
+	}
 }
 
 void
 kbfunc_lock(struct client_ctx *cc, union arg *arg)
 {
-	u_spawn(Conf.lockpath);
+	struct cmd *cmd;
+
+	TAILQ_FOREACH(cmd, &Conf.cmdq, entry) {
+		if (strcmp(cmd->name, "lock") == 0)
+			u_spawn(cmd->path);
+	}
 }
 
 void
@@ -271,8 +281,7 @@ kbfunc_exec(struct client_ctx *cc, union arg *arg)
 			(void)memset(tpath, '\0', sizeof(tpath));
 			l = snprintf(tpath, sizeof(tpath), "%s/%s", paths[i],
 			    dp->d_name);
-			/* check for truncation etc */
-			if (l == -1 || l >= (int)sizeof(tpath))
+			if (l == -1 || l >= sizeof(tpath))
 				continue;
 			if (access(tpath, X_OK) == 0)
 				menuq_add(&menuq, NULL, "%s", dp->d_name);
@@ -309,18 +318,24 @@ void
 kbfunc_ssh(struct client_ctx *cc, union arg *arg)
 {
 	struct screen_ctx	*sc = cc->sc;
+	struct cmd		*cmd;
 	struct menu		*mi;
 	struct menu_q		 menuq;
 	FILE			*fp;
 	char			*buf, *lbuf, *p;
 	char			 hostbuf[MAXHOSTNAMELEN];
-	char			 cmd[256];
+	char			 path[MAXPATHLEN];
 	int			 l;
 	size_t			 len;
 
 	if ((fp = fopen(Conf.known_hosts, "r")) == NULL) {
 		warn("kbfunc_ssh: %s", Conf.known_hosts);
 		return;
+	}
+
+	TAILQ_FOREACH(cmd, &Conf.cmdq, entry) {
+		if (strcmp(cmd->name, "term") == 0)
+			break;
 	}
 
 	TAILQ_INIT(&menuq);
@@ -355,10 +370,11 @@ kbfunc_ssh(struct client_ctx *cc, union arg *arg)
 	    search_match_exec, NULL)) != NULL) {
 		if (mi->text[0] == '\0')
 			goto out;
-		l = snprintf(cmd, sizeof(cmd), "%s -T '[ssh] %s' -e ssh %s",
-		    Conf.termpath, mi->text, mi->text);
-		if (l != -1 && l < sizeof(cmd))
-			u_spawn(cmd);
+		l = snprintf(path, sizeof(path), "%s -T '[ssh] %s' -e ssh %s",
+		    cmd->path, mi->text, mi->text);
+		if (l == -1 || l >= sizeof(path))
+			goto out;
+		u_spawn(path);
 	}
 out:
 	if (mi != NULL && mi->dummy)

@@ -15,7 +15,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  *
- * $OpenBSD: conf.c,v 1.177 2014/08/25 12:49:19 okan Exp $
+ * $OpenBSD: conf.c,v 1.179 2014/09/07 19:27:30 okan Exp $
  */
 
 #include <sys/param.h>
@@ -41,27 +41,19 @@ conf_cmd_add(struct conf *c, const char *name, const char *path)
 {
 	struct cmd	*cmd;
 
-	/* "term" and "lock" have special meanings. */
-	if (strcmp(name, "term") == 0) {
-		if (strlcpy(c->termpath, path, sizeof(c->termpath)) >=
-		    sizeof(c->termpath))
-			return (0);
-	} else if (strcmp(name, "lock") == 0) {
-		if (strlcpy(c->lockpath, path, sizeof(c->lockpath)) >=
-		    sizeof(c->lockpath))
-			return (0);
-	} else {
-		conf_cmd_remove(c, name);
+	cmd = xmalloc(sizeof(*cmd));
 
-		cmd = xmalloc(sizeof(*cmd));
-
-		cmd->name = xstrdup(name);
-		if (strlcpy(cmd->path, path, sizeof(cmd->path)) >=
-		    sizeof(cmd->path))
-			return (0);
-		TAILQ_INSERT_TAIL(&c->cmdq, cmd, entry);
+	cmd->name = xstrdup(name);
+	if (strlcpy(cmd->path, path, sizeof(cmd->path)) >= sizeof(cmd->path)) {
+		free(cmd->name);
+		free(cmd);
+		return(0);
 	}
-	return (1);
+
+	conf_cmd_remove(c, name);
+
+	TAILQ_INSERT_TAIL(&c->cmdq, cmd, entry);
+	return(1);
 }
 
 static void
@@ -483,14 +475,14 @@ conf_bind_getmask(const char *name, unsigned int *mask)
 
 	*mask = 0;
 	if ((dash = strchr(name, '-')) == NULL)
-		return (name);
+		return(name);
 	for (i = 0; i < nitems(bind_mods); i++) {
 		if ((ch = strchr(name, bind_mods[i].ch)) != NULL && ch < dash)
 			*mask |= bind_mods[i].mask;
 	}
 
 	/* Skip past modifiers. */
-	return (dash + 1);
+	return(dash + 1);
 }
 
 int
@@ -508,7 +500,7 @@ conf_bind_kbd(struct conf *c, const char *bind, const char *cmd)
 	if (kb->press.keysym == NoSymbol) {
 		warnx("unknown symbol: %s", key);
 		free(kb);
-		return (0);
+		return(0);
 	}
 
 	/* We now have the correct binding, remove duplicates. */
@@ -516,7 +508,7 @@ conf_bind_kbd(struct conf *c, const char *bind, const char *cmd)
 
 	if (strcmp("unmap", cmd) == 0) {
 		free(kb);
-		return (1);
+		return(1);
 	}
 
 	for (i = 0; i < nitems(name_to_func); i++) {
@@ -528,7 +520,7 @@ conf_bind_kbd(struct conf *c, const char *bind, const char *cmd)
 		kb->argument = name_to_func[i].argument;
 		kb->argtype |= ARG_INT;
 		TAILQ_INSERT_TAIL(&c->keybindingq, kb, entry);
-		return (1);
+		return(1);
 	}
 
 	kb->callback = kbfunc_cmdexec;
@@ -536,7 +528,7 @@ conf_bind_kbd(struct conf *c, const char *bind, const char *cmd)
 	kb->argument.c = xstrdup(cmd);
 	kb->argtype |= ARG_CHAR;
 	TAILQ_INSERT_TAIL(&c->keybindingq, kb, entry);
-	return (1);
+	return(1);
 }
 
 static void
@@ -572,7 +564,7 @@ conf_bind_mouse(struct conf *c, const char *bind, const char *cmd)
 	if (errstr) {
 		warnx("button number is %s: %s", errstr, button);
 		free(mb);
-		return (0);
+		return(0);
 	}
 
 	/* We now have the correct binding, remove duplicates. */
@@ -580,7 +572,7 @@ conf_bind_mouse(struct conf *c, const char *bind, const char *cmd)
 
 	if (strcmp("unmap", cmd) == 0) {
 		free(mb);
-		return (1);
+		return(1);
 	}
 
 	for (i = 0; i < nitems(name_to_func); i++) {
@@ -591,10 +583,10 @@ conf_bind_mouse(struct conf *c, const char *bind, const char *cmd)
 		mb->flags = name_to_func[i].flags;
 		mb->argument = name_to_func[i].argument;
 		TAILQ_INSERT_TAIL(&c->mousebindingq, mb, entry);
-		return (1);
+		return(1);
 	}
 
-	return (0);
+	return(0);
 }
 
 static void

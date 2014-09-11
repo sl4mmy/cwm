@@ -15,7 +15,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  *
- * $OpenBSD: xevents.c,v 1.111 2014/02/03 20:20:39 okan Exp $
+ * $OpenBSD: xevents.c,v 1.113 2014/09/07 17:38:38 okan Exp $
  */
 
 /*
@@ -196,7 +196,7 @@ xev_handle_propertynotify(XEvent *ee)
 		TAILQ_FOREACH(sc, &Screenq, entry) {
 			if (sc->rootwin == e->window) {
 				if (e->atom == ewmh[_NET_DESKTOP_NAMES])
-					group_update_names(sc);
+					xu_ewmh_net_desktop_names(sc);
 			}
 		}
 	}
@@ -239,7 +239,7 @@ xev_handle_buttonpress(XEvent *ee)
 		if (e->window != e->root)
 			return;
 		cc = &fakecc;
-		cc->sc = screen_fromroot(e->window);
+		cc->sc = screen_find(e->window);
 	}
 
 	(*mb->callback)(cc, &mb->argument);
@@ -289,7 +289,7 @@ xev_handle_keypress(XEvent *ee)
 			return;
 	} else {
 		cc = &fakecc;
-		cc->sc = screen_fromroot(e->window);
+		cc->sc = screen_find(e->window);
 	}
 
 	(*kb->callback)(cc, &kb->argument);
@@ -306,7 +306,7 @@ xev_handle_keyrelease(XEvent *ee)
 	KeySym			 keysym;
 	unsigned int		 i;
 
-	sc = screen_fromroot(e->root);
+	sc = screen_find(e->root);
 
 	keysym = XkbKeycodeToKeysym(X_Dpy, e->keycode, 0, 0);
 	for (i = 0; i < nitems(modkeys); i++) {
@@ -324,7 +324,7 @@ xev_handle_clientmessage(XEvent *ee)
 	struct client_ctx	*cc, *old_cc;
 	struct screen_ctx       *sc;
 
-	sc = screen_fromroot(e->window);
+	sc = screen_find(e->window);
 
 	if ((cc = client_find(e->window)) == NULL && e->window != sc->rootwin)
 		return;
