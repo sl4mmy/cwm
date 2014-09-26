@@ -16,7 +16,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  *
- * $OpenBSD: group.c,v 1.102 2014/09/08 21:15:14 okan Exp $
+ * $OpenBSD: group.c,v 1.106 2014/09/23 14:25:08 okan Exp $
  */
 
 #include <sys/param.h>
@@ -34,7 +34,7 @@
 
 static void		 group_assign(struct group_ctx *, struct client_ctx *);
 static void		 group_restack(struct group_ctx *);
-static void		 group_setactive(struct screen_ctx *, long);
+static void		 group_setactive(struct screen_ctx *, int);
 
 const char *num_to_name[] = {
 	"nogroup", "one", "two", "three", "four", "five", "six",
@@ -119,9 +119,6 @@ group_init(struct screen_ctx *sc)
 	struct group_ctx	*gc;
 	int			 i;
 
-	TAILQ_INIT(&sc->groupq);
-	sc->group_hideall = 0;
-
 	for (i = 0; i < CALMWM_NGROUPS; i++) {
 		gc = xcalloc(1, sizeof(*gc));
 		gc->sc = sc;
@@ -131,17 +128,11 @@ group_init(struct screen_ctx *sc)
 		TAILQ_INSERT_TAIL(&sc->groupq, gc, entry);
 	}
 
-	xu_ewmh_net_desktop_names(sc);
-	xu_ewmh_net_wm_desktop_viewport(sc);
-	xu_ewmh_net_wm_number_of_desktops(sc);
-	xu_ewmh_net_showing_desktop(sc);
-	xu_ewmh_net_virtual_roots(sc);
-
 	group_setactive(sc, 1);
 }
 
 static void
-group_setactive(struct screen_ctx *sc, long idx)
+group_setactive(struct screen_ctx *sc, int idx)
 {
 	struct group_ctx	*gc;
 
@@ -151,7 +142,7 @@ group_setactive(struct screen_ctx *sc, long idx)
 	}
 	sc->group_active = gc;
 
-	xu_ewmh_net_current_desktop(sc, idx);
+	xu_ewmh_net_current_desktop(sc);
 }
 
 void
@@ -170,7 +161,7 @@ group_movetogroup(struct client_ctx *cc, int idx)
 
 	if (cc->group == gc)
 		return;
-	if (group_hidden_state(gc))
+	if (group_holds_only_hidden(gc))
 		client_hide(cc);
 	group_assign(gc, cc);
 }
@@ -202,11 +193,20 @@ group_sticky_toggle_exit(struct client_ctx *cc)
 	client_draw_border(cc);
 }
 
-/*
- * If all clients in a group are hidden, then the group state is hidden.
- */
 int
-group_hidden_state(struct group_ctx *gc)
+group_holds_only_sticky(struct group_ctx *gc)
+{
+	struct client_ctx	*cc;
+
+	TAILQ_FOREACH(cc, &gc->clientq, group_entry) {
+		if (!(cc->flags & CLIENT_STICKY))
+			return(0);
+	}
+	return(1);
+}
+
+int
+group_holds_only_hidden(struct group_ctx *gc)
 {
 	struct client_ctx	*cc;
 	int			 hidden = 0, same = 0;
@@ -237,7 +237,7 @@ group_hidetoggle(struct screen_ctx *sc, int idx)
 			break;
 	}
 
-	if (group_hidden_state(gc))
+	if (group_holds_only_hidden(gc))
 		group_show(gc);
 	else {
 		group_hide(gc);
@@ -283,9 +283,9 @@ group_cycle(struct screen_ctx *sc, int flags)
 		if (gc == sc->group_active)
 			break;
 
-		if (!TAILQ_EMPTY(&gc->clientq) && showgroup == NULL)
+		if (!group_holds_only_sticky(gc) && showgroup == NULL)
 			showgroup = gc;
-		else if (!group_hidden_state(gc))
+		else if (!group_holds_only_hidden(gc))
 			group_hide(gc);
 	}
 
@@ -294,7 +294,7 @@ group_cycle(struct screen_ctx *sc, int flags)
 
 	group_hide(sc->group_active);
 
-	if (group_hidden_state(showgroup))
+	if (group_holds_only_hidden(showgroup))
 		group_show(showgroup);
 	else
 		group_setactive(sc, showgroup->num);
@@ -306,12 +306,12 @@ group_alltoggle(struct screen_ctx *sc)
 	struct group_ctx	*gc;
 
 	TAILQ_FOREACH(gc, &sc->groupq, entry) {
-		if (sc->group_hideall)
+		if (sc->hideall)
 			group_show(gc);
 		else
 			group_hide(gc);
 	}
-	sc->group_hideall = !sc->group_hideall;
+	sc->hideall = !sc->hideall;
 }
 
 void

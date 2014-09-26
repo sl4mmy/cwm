@@ -15,7 +15,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  *
- * $OpenBSD: calmwm.h,v 1.275 2014/09/10 20:30:38 okan Exp $
+ * $OpenBSD: calmwm.h,v 1.281 2014/09/23 14:25:08 okan Exp $
  */
 
 #ifndef _CALMWM_H_
@@ -233,19 +233,19 @@ struct screen_ctx {
 	Window			 rootwin;
 	Window			 menuwin;
 	int			 cycling;
+	int			 hideall;
 	int			 snapdist;
 	struct geom		 view; /* viewable area */
 	struct geom		 work; /* workable area, gap-applied */
 	struct gap		 gap;
 	struct client_ctx_q	 clientq;
 	struct region_ctx_q	 regionq;
+#define CALMWM_NGROUPS		 10
+	struct group_ctx_q	 groupq;
+	struct group_ctx	*group_active;
 	XftColor		 xftcolor[CWM_COLOR_NITEMS];
 	XftDraw			*xftdraw;
 	XftFont			*xftfont;
-#define CALMWM_NGROUPS		 10
-	struct group_ctx_q	 groupq;
-	int			 group_hideall;
-	struct group_ctx	*group_active;
 };
 TAILQ_HEAD(screen_ctx_q, screen_ctx);
 
@@ -348,10 +348,11 @@ enum {
 	_NET_WM_DESKTOP,
 	_NET_CLOSE_WINDOW,
 	_NET_WM_STATE,
-#define	_NET_WM_STATES_NITEMS	5
+#define	_NET_WM_STATES_NITEMS	6
 	_NET_WM_STATE_STICKY,
 	_NET_WM_STATE_MAXIMIZED_VERT,
 	_NET_WM_STATE_MAXIMIZED_HORZ,
+	_NET_WM_STATE_HIDDEN,
 	_NET_WM_STATE_FULLSCREEN,
 	_NET_WM_STATE_DEMANDS_ATTENTION,
 	EWMH_NITEMS
@@ -374,16 +375,12 @@ void			 client_cycle_leave(struct screen_ctx *);
 void			 client_delete(struct client_ctx *);
 void			 client_draw_border(struct client_ctx *);
 struct client_ctx	*client_find(Window);
-void			 client_freeze(struct client_ctx *);
-void			 client_fullscreen(struct client_ctx *);
 long			 client_get_wm_state(struct client_ctx *);
 void			 client_getsizehints(struct client_ctx *);
 void			 client_hide(struct client_ctx *);
-void			 client_hmaximize(struct client_ctx *);
 void 			 client_htile(struct client_ctx *);
 void			 client_lower(struct client_ctx *);
 void			 client_map(struct client_ctx *);
-void			 client_maximize(struct client_ctx *);
 void			 client_msg(struct client_ctx *, Atom, Time);
 void			 client_move(struct client_ctx *);
 struct client_ctx	*client_init(Window, struct screen_ctx *);
@@ -396,11 +393,16 @@ void			 client_set_wm_state(struct client_ctx *, long);
 void			 client_setactive(struct client_ctx *);
 void			 client_setname(struct client_ctx *);
 int			 client_snapcalc(int, int, int, int, int);
-void			 client_sticky(struct client_ctx *);
+void			 client_toggle_freeze(struct client_ctx *);
+void			 client_toggle_fullscreen(struct client_ctx *);
+void			 client_toggle_hidden(struct client_ctx *);
+void			 client_toggle_hmaximize(struct client_ctx *);
+void			 client_toggle_maximize(struct client_ctx *);
+void			 client_toggle_sticky(struct client_ctx *);
+void			 client_toggle_vmaximize(struct client_ctx *);
 void			 client_transient(struct client_ctx *);
 void			 client_unhide(struct client_ctx *);
 void			 client_urgency(struct client_ctx *);
-void			 client_vmaximize(struct client_ctx *);
 void 			 client_vtile(struct client_ctx *);
 void			 client_warp(struct client_ctx *);
 void			 client_wm_hints(struct client_ctx *);
@@ -408,14 +410,14 @@ void			 client_wm_hints(struct client_ctx *);
 void			 group_alltoggle(struct screen_ctx *);
 void			 group_autogroup(struct client_ctx *);
 void			 group_cycle(struct screen_ctx *, int);
-int			 group_hidden_state(struct group_ctx *);
 void			 group_hide(struct group_ctx *);
 void			 group_hidetoggle(struct screen_ctx *, int);
+int			 group_holds_only_hidden(struct group_ctx *);
+int			 group_holds_only_sticky(struct group_ctx *);
 void			 group_init(struct screen_ctx *);
 void			 group_movetogroup(struct client_ctx *, int);
 void			 group_only(struct screen_ctx *, int);
 void			 group_show(struct group_ctx *);
-void			 group_sticky(struct client_ctx *);
 void			 group_sticky_toggle_enter(struct client_ctx *);
 void			 group_sticky_toggle_exit(struct client_ctx *);
 void			 group_update_names(struct screen_ctx *);
@@ -443,21 +445,14 @@ void			 kbfunc_client_cycle(struct client_ctx *, union arg *);
 void			 kbfunc_client_cyclegroup(struct client_ctx *,
 			     union arg *);
 void			 kbfunc_client_delete(struct client_ctx *, union arg *);
-void			 kbfunc_client_freeze(struct client_ctx *, union arg *);
-void			 kbfunc_client_fullscreen(struct client_ctx *,
-			     union arg *);
 void			 kbfunc_client_group(struct client_ctx *, union arg *);
 void			 kbfunc_client_grouponly(struct client_ctx *,
 			     union arg *);
 void			 kbfunc_client_grouptoggle(struct client_ctx *,
 			     union arg *);
 void			 kbfunc_client_hide(struct client_ctx *, union arg *);
-void			 kbfunc_client_hmaximize(struct client_ctx *,
-			     union arg *);
 void			 kbfunc_client_label(struct client_ctx *, union arg *);
 void			 kbfunc_client_lower(struct client_ctx *, union arg *);
-void			 kbfunc_client_maximize(struct client_ctx *,
-			     union arg *);
 void			 kbfunc_client_moveresize(struct client_ctx *,
 			     union arg *);
 void			 kbfunc_client_movetogroup(struct client_ctx *,
@@ -467,8 +462,17 @@ void			 kbfunc_client_nogroup(struct client_ctx *,
 void			 kbfunc_client_raise(struct client_ctx *, union arg *);
 void			 kbfunc_client_rcycle(struct client_ctx *, union arg *);
 void			 kbfunc_client_search(struct client_ctx *, union arg *);
-void			 kbfunc_client_sticky(struct client_ctx *, union arg *);
-void			 kbfunc_client_vmaximize(struct client_ctx *,
+void			 kbfunc_client_toggle_freeze(struct client_ctx *,
+    			     union arg *);
+void			 kbfunc_client_toggle_fullscreen(struct client_ctx *,
+			     union arg *);
+void			 kbfunc_client_toggle_hmaximize(struct client_ctx *,
+			     union arg *);
+void			 kbfunc_client_toggle_maximize(struct client_ctx *,
+			     union arg *);
+void			 kbfunc_client_toggle_sticky(struct client_ctx *,
+    			     union arg *);
+void			 kbfunc_client_toggle_vmaximize(struct client_ctx *,
 			     union arg *);
 void			 kbfunc_cmdexec(struct client_ctx *, union arg *);
 void			 kbfunc_cwm_status(struct client_ctx *, union arg *);
@@ -544,7 +548,7 @@ void			 xu_ewmh_net_wm_desktop_viewport(struct screen_ctx *);
 void			 xu_ewmh_net_wm_number_of_desktops(struct screen_ctx *);
 void			 xu_ewmh_net_showing_desktop(struct screen_ctx *);
 void			 xu_ewmh_net_virtual_roots(struct screen_ctx *);
-void			 xu_ewmh_net_current_desktop(struct screen_ctx *, long);
+void			 xu_ewmh_net_current_desktop(struct screen_ctx *);
 void			 xu_ewmh_net_desktop_names(struct screen_ctx *);
 
 void			 xu_ewmh_net_wm_desktop(struct client_ctx *);
