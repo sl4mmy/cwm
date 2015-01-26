@@ -15,15 +15,16 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  *
- * $OpenBSD: conf.c,v 1.181 2014/09/17 18:41:44 okan Exp $
+ * $OpenBSD: conf.c,v 1.184 2015/01/24 18:16:59 okan Exp $
  */
 
-#include <sys/param.h>
+#include <sys/types.h>
 #include <sys/queue.h>
 #include <sys/stat.h>
 
 #include <err.h>
 #include <errno.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -75,7 +76,7 @@ conf_autogroup(struct conf *c, int num, const char *val)
 	struct autogroupwin	*aw;
 	char			*p;
 
-	aw = xcalloc(1, sizeof(*aw));
+	aw = xmalloc(sizeof(*aw));
 
 	if ((p = strchr(val, ',')) == NULL) {
 		aw->name = NULL;
@@ -95,7 +96,7 @@ conf_ignore(struct conf *c, const char *name)
 {
 	struct winname	*wn;
 
-	wn = xcalloc(1, sizeof(*wn));
+	wn = xmalloc(sizeof(*wn));
 	wn->name = xstrdup(name);
 	TAILQ_INSERT_TAIL(&c->ignoreq, wn, entry);
 }
