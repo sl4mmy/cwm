@@ -51,3 +51,4 @@
 #define __dead static
 
 char	*fgetln(FILE *, size_t *);  /* Silence compiler warnings in kbfunc.c */
+void	*reallocarray(void *, size_t, size_t);

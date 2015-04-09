@@ -6,7 +6,7 @@ LDFLAGS =
 LIBS = -lbsd -lXft -lXrender -lX11 -lxcb -lXau -lXdmcp -lfontconfig -lexpat -lfreetype -lz -lXinerama -lXrandr -lXext
 YACC = yacc
 
-cwm: calmwm.o client.o conf.o group.o kbfunc.o menu.o mousefunc.o parse.o screen.o search.o util.o xevents.o xmalloc.o xutil.o
+cwm: calmwm.o client.o conf.o group.o kbfunc.o menu.o mousefunc.o parse.o reallocarray.o screen.o search.o util.o xevents.o xmalloc.o xutil.o
 	$(CC) $(LDFLAGS) -o $@ $^ $(LIBS)
 
 clean:
