@@ -51,4 +51,5 @@
 #define __dead static
 
 char	*fgetln(FILE *, size_t *);  /* Silence compiler warnings in kbfunc.c */
+int	 pledge(const char *promises, const char *paths[]);
 void	*reallocarray(void *, size_t, size_t);
