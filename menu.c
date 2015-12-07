@@ -16,7 +16,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  *
- * $OpenBSD: menu.c,v 1.79 2015/03/28 22:09:10 okan Exp $
+ * $OpenBSD: menu.c,v 1.89 2015/11/11 14:22:01 okan Exp $
  */
 
 #include <sys/types.h>
@@ -55,12 +55,9 @@ struct menu_ctx {
 	int			 noresult;
 	int			 prev;
 	int			 entry;
-	int			 height;
-	int			 width;
 	int			 num;
 	int 			 flags;
-	int			 x;
-	int			 y;
+	struct geom		 geom;
 	void (*match)(struct menu_q *, struct menu_q *, char *);
 	void (*print)(struct menu *, int);
 };
@@ -75,7 +72,7 @@ static void		 menu_draw(struct menu_ctx *, struct menu_q *,
 static void 		 menu_draw_entry(struct menu_ctx *, struct menu_q *,
 			     int, int);
 static int		 menu_calc_entry(struct menu_ctx *, int, int);
-static struct menu 	*menu_complete_path(struct menu_ctx *);
+static struct menu	*menu_complete_path(struct menu_ctx *);
 static int		 menu_keycode(XKeyEvent *, enum ctltype *, char *);
 
 struct menu *
@@ -96,30 +93,30 @@ menu_filter(struct screen_ctx *sc, struct menu_q *menuq, const char *prompt,
 
 	(void)memset(&mc, 0, sizeof(mc));
 
-	xu_ptr_getpos(sc->rootwin, &mc.x, &mc.y);
-
-	xsave = mc.x;
-	ysave = mc.y;
+	xu_ptr_getpos(sc->rootwin, &xsave, &ysave);
 
 	mc.sc = sc;
 	mc.flags = flags;
-	if (prompt != NULL) {
-		evmask = MENUMASK | KEYMASK; /* accept keys as well */
-		(void)strlcpy(mc.promptstr, prompt, sizeof(mc.promptstr));
-		mc.hasprompt = 1;
-	} else {
-		evmask = MENUMASK;
+	mc.match = match;
+	mc.print = print;
+	mc.entry = mc.prev = -1;
+	mc.geom.x = xsave;
+	mc.geom.y = ysave;
+
+	if (mc.flags & CWM_MENU_LIST)
 		mc.list = 1;
-	}
 
 	if (initial != NULL)
 		(void)strlcpy(mc.searchstr, initial, sizeof(mc.searchstr));
 	else
 		mc.searchstr[0] = '\0';
 
-	mc.match = match;
-	mc.print = print;
-	mc.entry = mc.prev = -1;
+	evmask = MENUMASK;
+	if (prompt != NULL) {
+		evmask |= KEYMASK; /* accept keys as well */
+		(void)strlcpy(mc.promptstr, prompt, sizeof(mc.promptstr));
+		mc.hasprompt = 1;
+	}
 
 	XSelectInput(X_Dpy, sc->menuwin, evmask);
 	XMapRaised(X_Dpy, sc->menuwin);
@@ -173,7 +170,7 @@ out:
 	XSetInputFocus(X_Dpy, focuswin, focusrevert, CurrentTime);
 	/* restore if user didn't move */
 	xu_ptr_getpos(sc->rootwin, &xcur, &ycur);
-	if (xcur == mc.x && ycur == mc.y)
+	if (xcur == mc.geom.x && ycur == mc.geom.y)
 		xu_ptr_setpos(sc->rootwin, xsave, ysave);
 	xu_ptr_ungrab();
 
@@ -187,6 +184,7 @@ out:
 static struct menu *
 menu_complete_path(struct menu_ctx *mc)
 {
+	struct screen_ctx	*sc = mc->sc;
 	struct menu		*mi, *mr;
 	struct menu_q		 menuq;
 
@@ -194,7 +192,7 @@ menu_complete_path(struct menu_ctx *mc)
 
 	TAILQ_INIT(&menuq);
 
-	if ((mi = menu_filter(mc->sc, &menuq, mc->searchstr, NULL,
+	if ((mi = menu_filter(sc, &menuq, mc->searchstr, NULL,
 	    CWM_MENU_DUMMY, search_match_path_any, NULL)) != NULL) {
 		mr->abort = mi->abort;
 		mr->dummy = mi->dummy;
@@ -334,15 +332,14 @@ menu_draw(struct menu_ctx *mc, struct menu_q *menuq, struct menu_q *resultq)
 {
 	struct screen_ctx	*sc = mc->sc;
 	struct menu		*mi;
-	struct geom		 xine;
+	struct geom		 area;
 	int			 n, xsave, ysave;
 
 	if (mc->list) {
-		if (TAILQ_EMPTY(resultq) && mc->list) {
+		if (TAILQ_EMPTY(resultq)) {
 			/* Copy them all over. */
 			TAILQ_FOREACH(mi, menuq, entry)
-				TAILQ_INSERT_TAIL(resultq, mi,
-				    resultentry);
+				TAILQ_INSERT_TAIL(resultq, mi, resultentry);
 
 			mc->listing = 1;
 		} else if (mc->changed)
@@ -350,61 +347,57 @@ menu_draw(struct menu_ctx *mc, struct menu_q *menuq, struct menu_q *resultq)
 	}
 
 	mc->num = 0;
-	mc->width = 0;
-	mc->height = 0;
+	mc->geom.w = 0;
+	mc->geom.h = 0;
 	if (mc->hasprompt) {
 		(void)snprintf(mc->dispstr, sizeof(mc->dispstr), "%s%s%s%s",
 		    mc->promptstr, PROMPT_SCHAR, mc->searchstr, PROMPT_ECHAR);
-		mc->width = xu_xft_width(sc->xftfont, mc->dispstr,
+		mc->geom.w = xu_xft_width(sc->xftfont, mc->dispstr,
 		    strlen(mc->dispstr));
-		mc->height = sc->xftfont->height + 1;
+		mc->geom.h = sc->xftfont->height + 1;
 		mc->num = 1;
 	}
 
 	TAILQ_FOREACH(mi, resultq, resultentry) {
-		char *text;
-
-		if (mc->print != NULL) {
+		if (mc->print != NULL)
 			(*mc->print)(mi, mc->listing);
-			text = mi->print;
-		} else {
-			mi->print[0] = '\0';
-			text = mi->text;
-		}
+		else
+			(void)snprintf(mi->print, sizeof(mi->print),
+			    "%s", mi->text);
 
-		mc->width = MAX(mc->width, xu_xft_width(sc->xftfont, text,
-		    MIN(strlen(text), MENU_MAXENTRY)));
-		mc->height += sc->xftfont->height + 1;
+		mc->geom.w = MAX(mc->geom.w, xu_xft_width(sc->xftfont,
+		    mi->print, MIN(strlen(mi->print), MENU_MAXENTRY)));
+		mc->geom.h += sc->xftfont->height + 1;
 		mc->num++;
 	}
 
-	xine = screen_find_xinerama(sc, mc->x, mc->y, CWM_GAP);
-	xine.w += xine.x - Conf.bwidth * 2;
-	xine.h += xine.y - Conf.bwidth * 2;
+	area = screen_area(sc, mc->geom.x, mc->geom.y, CWM_GAP);
+	area.w += area.x - Conf.bwidth * 2;
+	area.h += area.y - Conf.bwidth * 2;
 
-	xsave = mc->x;
-	ysave = mc->y;
+	xsave = mc->geom.x;
+	ysave = mc->geom.y;
 
 	/* Never hide the top, or left side, of the menu. */
-	if (mc->x + mc->width >= xine.w)
-		mc->x = xine.w - mc->width;
-	if (mc->x < xine.x) {
-		mc->x = xine.x;
-		mc->width = MIN(mc->width, (xine.w - xine.x));
+	if (mc->geom.x + mc->geom.w >= area.w)
+		mc->geom.x = area.w - mc->geom.w;
+	if (mc->geom.x < area.x) {
+		mc->geom.x = area.x;
+		mc->geom.w = MIN(mc->geom.w, (area.w - area.x));
 	}
-	if (mc->y + mc->height >= xine.h)
-		mc->y = xine.h - mc->height;
-	if (mc->y < xine.y) {
-		mc->y = xine.y;
-		mc->height = MIN(mc->height, (xine.h - xine.y));
+	if (mc->geom.y + mc->geom.h >= area.h)
+		mc->geom.y = area.h - mc->geom.h;
+	if (mc->geom.y < area.y) {
+		mc->geom.y = area.y;
+		mc->geom.h = MIN(mc->geom.h, (area.h - area.y));
 	}
 
-	if (mc->x != xsave || mc->y != ysave)
-		xu_ptr_setpos(sc->rootwin, mc->x, mc->y);
+	if (mc->geom.x != xsave || mc->geom.y != ysave)
+		xu_ptr_setpos(sc->rootwin, mc->geom.x, mc->geom.y);
 
 	XClearWindow(X_Dpy, sc->menuwin);
-	XMoveResizeWindow(X_Dpy, sc->menuwin, mc->x, mc->y,
-	    mc->width, mc->height);
+	XMoveResizeWindow(X_Dpy, sc->menuwin, mc->geom.x, mc->geom.y,
+	    mc->geom.w, mc->geom.h);
 
 	if (mc->hasprompt) {
 		xu_xft_draw(sc, mc->dispstr, CWM_COLOR_MENU_FONT,
@@ -414,15 +407,13 @@ menu_draw(struct menu_ctx *mc, struct menu_q *menuq, struct menu_q *resultq)
 		n = 0;
 
 	TAILQ_FOREACH(mi, resultq, resultentry) {
-		char *text = mi->print[0] != '\0' ?
-		    mi->print : mi->text;
 		int y = n * (sc->xftfont->height + 1) + sc->xftfont->ascent + 1;
 
 		/* Stop drawing when menu doesn't fit inside the screen. */
-		if (mc->y + y > xine.h)
+		if (mc->geom.y + y > area.h)
 			break;
 
-		xu_xft_draw(sc, text, CWM_COLOR_MENU_FONT, 0, y);
+		xu_xft_draw(sc, mi->print, CWM_COLOR_MENU_FONT, 0, y);
 		n++;
 	}
 	if (mc->hasprompt && n > 1)
@@ -435,7 +426,6 @@ menu_draw_entry(struct menu_ctx *mc, struct menu_q *resultq,
 {
 	struct screen_ctx	*sc = mc->sc;
 	struct menu		*mi;
-	char 			*text;
 	int			 color, i = 0;
 
 	if (mc->hasprompt)
@@ -447,13 +437,12 @@ menu_draw_entry(struct menu_ctx *mc, struct menu_q *resultq,
 	if (mi == NULL)
 		return;
 
-	color = active ? CWM_COLOR_MENU_FG : CWM_COLOR_MENU_BG;
-	text = mi->print[0] != '\0' ? mi->print : mi->text;
+	color = (active) ? CWM_COLOR_MENU_FG : CWM_COLOR_MENU_BG;
 	XftDrawRect(sc->xftdraw, &sc->xftcolor[color], 0,
-	    (sc->xftfont->height + 1) * entry, mc->width,
+	    (sc->xftfont->height + 1) * entry, mc->geom.w,
 	    (sc->xftfont->height + 1) + sc->xftfont->descent);
-	color = active ? CWM_COLOR_MENU_FONT_SEL : CWM_COLOR_MENU_FONT;
-	xu_xft_draw(sc, text, color,
+	color = (active) ? CWM_COLOR_MENU_FONT_SEL : CWM_COLOR_MENU_FONT;
+	xu_xft_draw(sc, mi->print, color,
 	    0, (sc->xftfont->height + 1) * entry + sc->xftfont->ascent + 1);
 }
 
@@ -506,7 +495,7 @@ menu_calc_entry(struct menu_ctx *mc, int x, int y)
 	entry = y / (sc->xftfont->height + 1);
 
 	/* in bounds? */
-	if (x < 0 || x > mc->width || y < 0 ||
+	if (x < 0 || x > mc->geom.w || y < 0 ||
 	    y > (sc->xftfont->height + 1) * mc->num ||
 	    entry < 0 || entry >= mc->num)
 		entry = -1;

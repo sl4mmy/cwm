@@ -15,13 +15,12 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  *
- * $OpenBSD: search.c,v 1.42 2015/01/19 14:54:16 okan Exp $
+ * $OpenBSD: search.c,v 1.51 2015/08/27 18:53:15 okan Exp $
  */
 
 #include <sys/types.h>
 #include <sys/queue.h>
 
-#include <assert.h>
 #include <err.h>
 #include <errno.h>
 #include <fnmatch.h>
@@ -43,10 +42,6 @@ static void	search_match_path_exec(struct menu_q *, struct menu_q *,
 		    char *);
 static int	strsubmatch(char *, char *, int);
 
-/*
- * Match: label, title, class.
- */
-
 void
 search_match_client(struct menu_q *menuq, struct menu_q *resultq, char *search)
 {
@@ -67,7 +62,7 @@ search_match_client(struct menu_q *menuq, struct menu_q *resultq, char *search)
 
 	TAILQ_FOREACH(mi, menuq, entry) {
 		int tier = -1, t;
-		struct client_ctx *cc = mi->ctx;
+		struct client_ctx *cc = (struct client_ctx *)mi->ctx;
 
 		/* First, try to match on labels. */
 		if (cc->label != NULL && strsubmatch(search, cc->label, 0)) {
@@ -106,7 +101,8 @@ search_match_client(struct menu_q *menuq, struct menu_q *resultq, char *search)
 		if ((cc->flags & CLIENT_HIDDEN) && (tier > 0))
 			tier--;
 
-		assert(tier < nitems(tierp));
+		if (tier >= nitems(tierp))
+			errx(1, "search_match_client: invalid tier");
 
 		/*
 		 * If you have a tierp, insert after it, and make it
@@ -128,46 +124,40 @@ search_match_client(struct menu_q *menuq, struct menu_q *resultq, char *search)
 }
 
 void
+search_print_cmd(struct menu *mi, int i)
+{
+	struct cmd	*cmd = (struct cmd *)mi->ctx;
+
+	(void)snprintf(mi->print, sizeof(mi->print), "%s", cmd->name);
+}
+
+void
+search_print_group(struct menu *mi, int i)
+{
+	struct group_ctx	*gc = (struct group_ctx *)mi->ctx;
+
+	(void)snprintf(mi->print, sizeof(mi->print),
+	    (group_holds_only_hidden(gc)) ? "%d: [%s]" : "%d: %s",
+	    gc->num, gc->name);
+}
+
+void
 search_print_client(struct menu *mi, int list)
 {
-	struct client_ctx	*cc;
+	struct client_ctx	*cc = (struct client_ctx *)mi->ctx;
 	char			 flag = ' ';
-
-	cc = mi->ctx;
 
 	if (cc == client_current())
 		flag = '!';
 	else if (cc->flags & CLIENT_HIDDEN)
 		flag = '&';
 
-	if (list)
+	if ((list) || (cc->matchname == cc->label))
 		cc->matchname = cc->name;
 
-	(void)snprintf(mi->print, sizeof(mi->print), "(%d) %c%s",
-	    cc->group ? cc->group->num : 0, flag, cc->matchname);
-
-	if (!list && cc->matchname != cc->name &&
-	    strlen(mi->print) < sizeof(mi->print) - 1) {
-		const char	*marker = "";
-		char		 buf[MENU_MAXENTRY + 1];
-		int		 diff;
-
-		diff = sizeof(mi->print) - 1 - strlen(mi->print);
-
-		/* One for the ':' */
-		diff -= 1;
-
-		if (strlen(cc->name) > diff) {
-			marker = "..";
-			diff -= 2;
-		} else {
-			diff = strlen(cc->name);
-		}
-
-		(void)strlcpy(buf, mi->print, sizeof(buf));
-		(void)snprintf(mi->print, sizeof(mi->print),
-		    "%s:%.*s%s", buf, diff, cc->name, marker);
-	}
+	(void)snprintf(mi->print, sizeof(mi->print), "(%d) %c[%s] %s",
+	    (cc->gc) ? cc->gc->num : 0, flag,
+	    (cc->label) ? cc->label : "", cc->matchname);
 }
 
 static void

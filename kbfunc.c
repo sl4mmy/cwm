@@ -15,7 +15,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  *
- * $OpenBSD: kbfunc.c,v 1.105 2015/01/19 14:54:16 okan Exp $
+ * $OpenBSD: kbfunc.c,v 1.126 2015/11/17 14:32:38 okan Exp $
  */
 
 #include <sys/types.h>
@@ -38,6 +38,8 @@
 
 extern sig_atomic_t	 cwm_status;
 
+static void kbfunc_amount(int, int, unsigned int *, unsigned int *);
+
 void
 kbfunc_client_lower(struct client_ctx *cc, union arg *arg)
 {
@@ -51,98 +53,115 @@ kbfunc_client_raise(struct client_ctx *cc, union arg *arg)
 	client_raise(cc);
 }
 
-#define TYPEMASK	(CWM_MOVE | CWM_RESIZE | CWM_PTRMOVE)
-#define MOVEMASK	(CWM_UP | CWM_DOWN | CWM_LEFT | CWM_RIGHT)
-void
-kbfunc_client_moveresize(struct client_ctx *cc, union arg *arg)
+static void
+kbfunc_amount(int flags, int amt, unsigned int *mx, unsigned int *my)
 {
-	struct screen_ctx	*sc = cc->sc;
-	struct geom		 xine;
-	int			 x, y, flags, amt;
-	unsigned int		 mx, my;
+#define CWM_FACTOR 10
 
-	if (cc->flags & (CLIENT_FREEZE|CLIENT_STICKY))
-		return;
+	if (flags & CWM_BIGAMOUNT)
+		amt *= CWM_FACTOR;
 
-	mx = my = 0;
-
-	flags = arg->i;
-	amt = Conf.mamount;
-
-	if (flags & CWM_BIGMOVE) {
-		flags -= CWM_BIGMOVE;
-		amt = amt * 10;
-	}
-
-	switch (flags & MOVEMASK) {
+	switch (flags & DIRECTIONMASK) {
 	case CWM_UP:
-		my -= amt;
+		*my -= amt;
 		break;
 	case CWM_DOWN:
-		my += amt;
+		*my += amt;
 		break;
 	case CWM_RIGHT:
-		mx += amt;
+		*mx += amt;
 		break;
 	case CWM_LEFT:
-		mx -= amt;
+		*mx -= amt;
 		break;
-	}
-	switch (flags & TYPEMASK) {
-	case CWM_MOVE:
-		cc->geom.x += mx;
-		if (cc->geom.x + cc->geom.w < 0)
-			cc->geom.x = -cc->geom.w;
-		if (cc->geom.x > sc->view.w - 1)
-			cc->geom.x = sc->view.w - 1;
-		cc->geom.y += my;
-		if (cc->geom.y + cc->geom.h < 0)
-			cc->geom.y = -cc->geom.h;
-		if (cc->geom.y > sc->view.h - 1)
-			cc->geom.y = sc->view.h - 1;
-
-		xine = screen_find_xinerama(sc,
-		    cc->geom.x + cc->geom.w / 2,
-		    cc->geom.y + cc->geom.h / 2, CWM_GAP);
-		cc->geom.x += client_snapcalc(cc->geom.x,
-		    cc->geom.x + cc->geom.w + (cc->bwidth * 2),
-		    xine.x, xine.x + xine.w, sc->snapdist);
-		cc->geom.y += client_snapcalc(cc->geom.y,
-		    cc->geom.y + cc->geom.h + (cc->bwidth * 2),
-		    xine.y, xine.y + xine.h, sc->snapdist);
-
-		client_move(cc);
-		xu_ptr_getpos(cc->win, &x, &y);
-		cc->ptr.x = x + mx;
-		cc->ptr.y = y + my;
-		client_ptrwarp(cc);
-		break;
-	case CWM_RESIZE:
-		if ((cc->geom.w += mx) < 1)
-			cc->geom.w = 1;
-		if ((cc->geom.h += my) < 1)
-			cc->geom.h = 1;
-		client_resize(cc, 1);
-
-		/* Make sure the pointer stays within the window. */
-		xu_ptr_getpos(cc->win, &cc->ptr.x, &cc->ptr.y);
-		if (cc->ptr.x > cc->geom.w)
-			cc->ptr.x = cc->geom.w - cc->bwidth;
-		if (cc->ptr.y > cc->geom.h)
-			cc->ptr.y = cc->geom.h - cc->bwidth;
-		client_ptrwarp(cc);
-		break;
-	case CWM_PTRMOVE:
-		xu_ptr_getpos(sc->rootwin, &x, &y);
-		xu_ptr_setpos(sc->rootwin, x + mx, y + my);
-		break;
-	default:
-		warnx("invalid flags passed to kbfunc_client_moveresize");
 	}
 }
 
 void
-kbfunc_client_search(struct client_ctx *cc, union arg *arg)
+kbfunc_ptrmove(struct client_ctx *cc, union arg *arg)
+{
+	struct screen_ctx	*sc = cc->sc;
+	int			 x, y;
+	unsigned int		 mx = 0, my = 0;
+
+	kbfunc_amount(arg->i, Conf.mamount, &mx, &my);
+
+	xu_ptr_getpos(sc->rootwin, &x, &y);
+	xu_ptr_setpos(sc->rootwin, x + mx, y + my);
+}
+
+void
+kbfunc_client_move(struct client_ctx *cc, union arg *arg)
+{
+	struct screen_ctx	*sc = cc->sc;
+	struct geom		 area;
+	int			 x, y;
+	unsigned int		 mx = 0, my = 0;
+
+	if (cc->flags & CLIENT_FREEZE)
+		return;
+
+	kbfunc_amount(arg->i, Conf.mamount, &mx, &my);
+
+	cc->geom.x += mx;
+	if (cc->geom.x + cc->geom.w < 0)
+		cc->geom.x = -cc->geom.w;
+	if (cc->geom.x > sc->view.w - 1)
+		cc->geom.x = sc->view.w - 1;
+	cc->geom.y += my;
+	if (cc->geom.y + cc->geom.h < 0)
+		cc->geom.y = -cc->geom.h;
+	if (cc->geom.y > sc->view.h - 1)
+		cc->geom.y = sc->view.h - 1;
+
+	area = screen_area(sc,
+	    cc->geom.x + cc->geom.w / 2,
+	    cc->geom.y + cc->geom.h / 2, CWM_GAP);
+	cc->geom.x += client_snapcalc(cc->geom.x,
+	    cc->geom.x + cc->geom.w + (cc->bwidth * 2),
+	    area.x, area.x + area.w, sc->snapdist);
+	cc->geom.y += client_snapcalc(cc->geom.y,
+	    cc->geom.y + cc->geom.h + (cc->bwidth * 2),
+	    area.y, area.y + area.h, sc->snapdist);
+	client_move(cc);
+
+	xu_ptr_getpos(cc->win, &x, &y);
+	cc->ptr.x = x + mx;
+	cc->ptr.y = y + my;
+	client_ptrwarp(cc);
+}
+
+void
+kbfunc_client_resize(struct client_ctx *cc, union arg *arg)
+{
+	unsigned int		 mx = 0, my = 0;
+	int			 amt = 1;
+
+	if (cc->flags & CLIENT_FREEZE)
+		return;
+
+	if (!(cc->hint.flags & PResizeInc))
+		amt = Conf.mamount;
+
+	kbfunc_amount(arg->i, amt, &mx, &my);
+
+	if ((cc->geom.w += mx * cc->hint.incw) < cc->hint.minw)
+		cc->geom.w = cc->hint.minw;
+	if ((cc->geom.h += my * cc->hint.inch) < cc->hint.minh)
+		cc->geom.h = cc->hint.minh;
+	client_resize(cc, 1);
+
+	/* Make sure the pointer stays within the window. */
+	xu_ptr_getpos(cc->win, &cc->ptr.x, &cc->ptr.y);
+	if (cc->ptr.x > cc->geom.w)
+		cc->ptr.x = cc->geom.w - cc->bwidth;
+	if (cc->ptr.y > cc->geom.h)
+		cc->ptr.y = cc->geom.h - cc->bwidth;
+	client_ptrwarp(cc);
+}
+
+void
+kbfunc_menu_client(struct client_ctx *cc, union arg *arg)
 {
 	struct screen_ctx	*sc = cc->sc;
 	struct client_ctx	*old_cc;
@@ -153,7 +172,7 @@ kbfunc_client_search(struct client_ctx *cc, union arg *arg)
 
 	TAILQ_INIT(&menuq);
 	TAILQ_FOREACH(cc, &sc->clientq, entry)
-		menuq_add(&menuq, cc, "%s", cc->name);
+		menuq_add(&menuq, cc, NULL);
 
 	if ((mi = menu_filter(sc, &menuq, "window", NULL, 0,
 	    search_match_client, search_print_client)) != NULL) {
@@ -177,12 +196,42 @@ kbfunc_menu_cmd(struct client_ctx *cc, union arg *arg)
 	struct menu_q		 menuq;
 
 	TAILQ_INIT(&menuq);
-	TAILQ_FOREACH(cmd, &Conf.cmdq, entry)
+	TAILQ_FOREACH(cmd, &Conf.cmdq, entry) {
+		if ((strcmp(cmd->name, "lock") == 0) ||
+		    (strcmp(cmd->name, "term") == 0))
+			continue;
+		/* search_match_text() needs mi->text */
 		menuq_add(&menuq, cmd, "%s", cmd->name);
+	}
 
 	if ((mi = menu_filter(sc, &menuq, "application", NULL, 0,
-	    search_match_text, NULL)) != NULL)
+	    search_match_text, search_print_cmd)) != NULL)
 		u_spawn(((struct cmd *)mi->ctx)->path);
+
+	menuq_clear(&menuq);
+}
+
+void
+kbfunc_menu_group(struct client_ctx *cc, union arg *arg)
+{
+	struct screen_ctx	*sc = cc->sc;
+	struct group_ctx	*gc;
+	struct menu		*mi;
+	struct menu_q		 menuq;
+
+	TAILQ_INIT(&menuq);
+	TAILQ_FOREACH(gc, &sc->groupq, entry) {
+		if (group_holds_only_sticky(gc))
+			continue;
+		menuq_add(&menuq, gc, "%d %s", gc->num, gc->name);
+	}
+
+	if ((mi = menu_filter(sc, &menuq, "group", NULL, CWM_MENU_LIST,
+	    search_match_text, search_print_group)) != NULL) {
+		gc = (struct group_ctx *)mi->ctx;
+		(group_holds_only_hidden(gc)) ?
+		    group_show(gc) : group_hide(gc);
+	}
 
 	menuq_clear(&menuq);
 }
@@ -190,13 +239,7 @@ kbfunc_menu_cmd(struct client_ctx *cc, union arg *arg)
 void
 kbfunc_client_cycle(struct client_ctx *cc, union arg *arg)
 {
-	struct screen_ctx	*sc = cc->sc;
-
-	/* XXX for X apps that ignore events */
-	XGrabKeyboard(X_Dpy, sc->rootwin, True,
-	    GrabModeAsync, GrabModeAsync, CurrentTime);
-
-	client_cycle(sc, arg->i);
+	client_cycle(cc->sc, arg->i);
 }
 
 void
@@ -206,13 +249,13 @@ kbfunc_client_hide(struct client_ctx *cc, union arg *arg)
 }
 
 void
-kbfunc_cmdexec(struct client_ctx *cc, union arg *arg)
+kbfunc_exec(struct client_ctx *cc, union arg *arg)
 {
 	u_spawn(arg->c);
 }
 
 void
-kbfunc_term(struct client_ctx *cc, union arg *arg)
+kbfunc_exec_term(struct client_ctx *cc, union arg *arg)
 {
 	struct cmd *cmd;
 
@@ -223,7 +266,7 @@ kbfunc_term(struct client_ctx *cc, union arg *arg)
 }
 
 void
-kbfunc_lock(struct client_ctx *cc, union arg *arg)
+kbfunc_exec_lock(struct client_ctx *cc, union arg *arg)
 {
 	struct cmd *cmd;
 
@@ -234,7 +277,7 @@ kbfunc_lock(struct client_ctx *cc, union arg *arg)
 }
 
 void
-kbfunc_exec(struct client_ctx *cc, union arg *arg)
+kbfunc_menu_exec(struct client_ctx *cc, union arg *arg)
 {
 #define NPATHS 256
 	struct screen_ctx	*sc = cc->sc;
@@ -248,14 +291,14 @@ kbfunc_exec(struct client_ctx *cc, union arg *arg)
 	int			 l, i, cmd = arg->i;
 
 	switch (cmd) {
-	case CWM_EXEC_PROGRAM:
+	case CWM_MENU_EXEC:
 		label = "exec";
 		break;
-	case CWM_EXEC_WM:
+	case CWM_MENU_EXEC_WM:
 		label = "wm";
 		break;
 	default:
-		errx(1, "kbfunc_exec: invalid cmd %d", cmd);
+		errx(1, "kbfunc_menu_exec: invalid cmd %d", cmd);
 		/*NOTREACHED*/
 	}
 
@@ -297,12 +340,13 @@ kbfunc_exec(struct client_ctx *cc, union arg *arg)
 		if (mi->text[0] == '\0')
 			goto out;
 		switch (cmd) {
-		case CWM_EXEC_PROGRAM:
+		case CWM_MENU_EXEC:
 			u_spawn(mi->text);
 			break;
-		case CWM_EXEC_WM:
-			u_exec(mi->text);
-			warn("%s", mi->text);
+		case CWM_MENU_EXEC_WM:
+			cwm_status = CWM_EXEC_WM;
+			free(wm_argv);
+			wm_argv = xstrdup(mi->text);
 			break;
 		default:
 			errx(1, "kb_func: egad, cmd changed value!");
@@ -316,7 +360,7 @@ out:
 }
 
 void
-kbfunc_ssh(struct client_ctx *cc, union arg *arg)
+kbfunc_menu_ssh(struct client_ctx *cc, union arg *arg)
 {
 	struct screen_ctx	*sc = cc->sc;
 	struct cmd		*cmd;
@@ -329,17 +373,16 @@ kbfunc_ssh(struct client_ctx *cc, union arg *arg)
 	int			 l;
 	size_t			 len;
 
-	if ((fp = fopen(Conf.known_hosts, "r")) == NULL) {
-		warn("kbfunc_ssh: %s", Conf.known_hosts);
-		return;
-	}
-
 	TAILQ_FOREACH(cmd, &Conf.cmdq, entry) {
 		if (strcmp(cmd->name, "term") == 0)
 			break;
 	}
-
 	TAILQ_INIT(&menuq);
+
+	if ((fp = fopen(Conf.known_hosts, "r")) == NULL) {
+		warn("kbfunc_menu_ssh: %s", Conf.known_hosts);
+		goto menu;
+	}
 
 	lbuf = NULL;
 	while ((buf = fgetln(fp, &len))) {
@@ -366,7 +409,7 @@ kbfunc_ssh(struct client_ctx *cc, union arg *arg)
 	}
 	free(lbuf);
 	(void)fclose(fp);
-
+menu:
 	if ((mi = menu_filter(sc, &menuq, "ssh", NULL, CWM_MENU_DUMMY,
 	    search_match_exec, NULL)) != NULL) {
 		if (mi->text[0] == '\0')
@@ -409,25 +452,25 @@ kbfunc_client_delete(struct client_ctx *cc, union arg *arg)
 }
 
 void
-kbfunc_client_group(struct client_ctx *cc, union arg *arg)
+kbfunc_group_toggle(struct client_ctx *cc, union arg *arg)
 {
 	group_hidetoggle(cc->sc, arg->i);
 }
 
 void
-kbfunc_client_grouponly(struct client_ctx *cc, union arg *arg)
+kbfunc_group_only(struct client_ctx *cc, union arg *arg)
 {
 	group_only(cc->sc, arg->i);
 }
 
 void
-kbfunc_client_cyclegroup(struct client_ctx *cc, union arg *arg)
+kbfunc_group_cycle(struct client_ctx *cc, union arg *arg)
 {
 	group_cycle(cc->sc, arg->i);
 }
 
 void
-kbfunc_client_nogroup(struct client_ctx *cc, union arg *arg)
+kbfunc_group_alltoggle(struct client_ctx *cc, union arg *arg)
 {
 	group_alltoggle(cc->sc);
 }
@@ -435,9 +478,11 @@ kbfunc_client_nogroup(struct client_ctx *cc, union arg *arg)
 void
 kbfunc_client_grouptoggle(struct client_ctx *cc, union arg *arg)
 {
-	/* XXX for stupid X apps like xpdf and gvim */
-	XGrabKeyboard(X_Dpy, cc->win, True,
-	    GrabModeAsync, GrabModeAsync, CurrentTime);
+	if (arg->i == CWM_KBD) {
+		/* For X apps that steal events. */
+		XGrabKeyboard(X_Dpy, cc->win, True,
+		    GrabModeAsync, GrabModeAsync, CurrentTime);
+	}
 
 	group_toggle_membership_enter(cc);
 }
@@ -491,13 +536,13 @@ kbfunc_cwm_status(struct client_ctx *cc, union arg *arg)
 }
 
 void
-kbfunc_tile(struct client_ctx *cc, union arg *arg)
+kbfunc_client_tile(struct client_ctx *cc, union arg *arg)
 {
 	switch (arg->i) {
-	case CWM_TILE_HORIZ:
+	case CWM_CLIENT_TILE_HORIZ:
 		client_htile(cc);
 		break;
-	case CWM_TILE_VERT:
+	case CWM_CLIENT_TILE_VERT:
 		client_vtile(cc);
 		break;
 	}

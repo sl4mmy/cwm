@@ -16,7 +16,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  *
- * $OpenBSD: mousefunc.c,v 1.86 2015/01/19 14:54:16 okan Exp $
+ * $OpenBSD: mousefunc.c,v 1.103 2015/11/17 14:31:28 okan Exp $
  */
 
 #include <sys/types.h>
@@ -32,20 +32,7 @@
 
 #include "calmwm.h"
 
-static void	mousefunc_sweep_calc(struct client_ctx *, int, int, int, int);
 static void	mousefunc_sweep_draw(struct client_ctx *);
-
-static void
-mousefunc_sweep_calc(struct client_ctx *cc, int x, int y, int mx, int my)
-{
-	cc->geom.w = abs(x - mx) - cc->bwidth;
-	cc->geom.h = abs(y - my) - cc->bwidth;
-
-	client_applysizehints(cc);
-
-	cc->geom.x = x <= mx ? x : x - cc->geom.w;
-	cc->geom.y = y <= my ? y : y - cc->geom.h;
-}
 
 static void
 mousefunc_sweep_draw(struct client_ctx *cc)
@@ -53,9 +40,7 @@ mousefunc_sweep_draw(struct client_ctx *cc)
 	struct screen_ctx	*sc = cc->sc;
 	char			 s[14]; /* fits " nnnn x nnnn \0" */
 
-	(void)snprintf(s, sizeof(s), " %4d x %-4d ",
-	    (cc->geom.w - cc->hint.basew) / cc->hint.incw,
-	    (cc->geom.h - cc->hint.baseh) / cc->hint.inch);
+	(void)snprintf(s, sizeof(s), " %4d x %-4d ", cc->dim.w, cc->dim.h);
 
 	XReparentWindow(X_Dpy, sc->menuwin, cc->win, 0, 0);
 	XMoveResizeWindow(X_Dpy, sc->menuwin, 0, 0,
@@ -74,7 +59,7 @@ mousefunc_client_resize(struct client_ctx *cc, union arg *arg)
 	struct screen_ctx	*sc = cc->sc;
 	int			 x = cc->geom.x, y = cc->geom.y;
 
-	if (cc->flags & (CLIENT_FREEZE|CLIENT_STICKY))
+	if (cc->flags & CLIENT_FREEZE)
 		return;
 
 	client_raise(cc);
@@ -96,8 +81,13 @@ mousefunc_client_resize(struct client_ctx *cc, union arg *arg)
 				continue;
 			ltime = ev.xmotion.time;
 
-			mousefunc_sweep_calc(cc, x, y,
-			    ev.xmotion.x_root, ev.xmotion.y_root);
+			cc->geom.w = abs(x - ev.xmotion.x_root) - cc->bwidth;
+			cc->geom.h = abs(y - ev.xmotion.y_root) - cc->bwidth;
+			cc->geom.x = (x <= ev.xmotion.x_root) ?
+				x : x - cc->geom.w;
+			cc->geom.y = (y <= ev.xmotion.y_root) ?
+				y : y - cc->geom.h;
+			client_applysizehints(cc);
 			client_resize(cc, 1);
 			mousefunc_sweep_draw(cc);
 			break;
@@ -125,12 +115,12 @@ mousefunc_client_move(struct client_ctx *cc, union arg *arg)
 	XEvent			 ev;
 	Time			 ltime = 0;
 	struct screen_ctx	*sc = cc->sc;
-	struct geom		 xine;
+	struct geom		 area;
 	int			 px, py;
 
 	client_raise(cc);
 
-	if (cc->flags & (CLIENT_FREEZE|CLIENT_STICKY))
+	if (cc->flags & CLIENT_FREEZE)
 		return;
 
 	if (xu_ptr_grab(cc->win, MOUSEMASK, Conf.cursor[CF_MOVE]) < 0)
@@ -151,16 +141,15 @@ mousefunc_client_move(struct client_ctx *cc, union arg *arg)
 			cc->geom.x = ev.xmotion.x_root - px - cc->bwidth;
 			cc->geom.y = ev.xmotion.y_root - py - cc->bwidth;
 
-			xine = screen_find_xinerama(sc,
+			area = screen_area(sc,
 			    cc->geom.x + cc->geom.w / 2,
 			    cc->geom.y + cc->geom.h / 2, CWM_GAP);
 			cc->geom.x += client_snapcalc(cc->geom.x,
 			    cc->geom.x + cc->geom.w + (cc->bwidth * 2),
-			    xine.x, xine.x + xine.w, sc->snapdist);
+			    area.x, area.x + area.w, sc->snapdist);
 			cc->geom.y += client_snapcalc(cc->geom.y,
 			    cc->geom.y + cc->geom.h + (cc->bwidth * 2),
-			    xine.y, xine.y + xine.h, sc->snapdist);
-
+			    area.y, area.y + area.h, sc->snapdist);
 			client_move(cc);
 			break;
 		case ButtonRelease:
@@ -170,12 +159,6 @@ mousefunc_client_move(struct client_ctx *cc, union arg *arg)
 		}
 	}
 	/* NOTREACHED */
-}
-
-void
-mousefunc_client_grouptoggle(struct client_ctx *cc, union arg *arg)
-{
-	group_toggle_membership_enter(cc);
 }
 
 void
@@ -190,15 +173,11 @@ mousefunc_menu_group(struct client_ctx *cc, union arg *arg)
 	TAILQ_FOREACH(gc, &sc->groupq, entry) {
 		if (group_holds_only_sticky(gc))
 			continue;
-		menuq_add(&menuq, gc,
-		    group_holds_only_hidden(gc) ? "%d: [%s]" : "%d: %s",
-		    gc->num, gc->name);
+		menuq_add(&menuq, gc, "%d %s", gc->num, gc->name);
 	}
-	if (TAILQ_EMPTY(&menuq))
-		return;
 
-	if ((mi = menu_filter(sc, &menuq, NULL, NULL, 0,
-	    NULL, NULL)) != NULL) {
+	if ((mi = menu_filter(sc, &menuq, NULL, NULL, CWM_MENU_LIST,
+	    NULL, search_print_group)) != NULL) {
 		gc = (struct group_ctx *)mi->ctx;
 		(group_holds_only_hidden(gc)) ?
 		    group_show(gc) : group_hide(gc);
@@ -208,31 +187,24 @@ mousefunc_menu_group(struct client_ctx *cc, union arg *arg)
 }
 
 void
-mousefunc_menu_unhide(struct client_ctx *cc, union arg *arg)
+mousefunc_menu_client(struct client_ctx *cc, union arg *arg)
 {
 	struct screen_ctx	*sc = cc->sc;
 	struct client_ctx	*old_cc;
 	struct menu		*mi;
 	struct menu_q		 menuq;
-	char			*wname;
 
 	old_cc = client_current();
 
 	TAILQ_INIT(&menuq);
 	TAILQ_FOREACH(cc, &sc->clientq, entry) {
 		if (cc->flags & CLIENT_HIDDEN) {
-			wname = (cc->label) ? cc->label : cc->name;
-			if (wname == NULL)
-				continue;
-			menuq_add(&menuq, cc, "(%d) %s",
-			    cc->group ? cc->group->num : 0, wname);
+			menuq_add(&menuq, cc, NULL);
 		}
 	}
-	if (TAILQ_EMPTY(&menuq))
-		return;
 
-	if ((mi = menu_filter(sc, &menuq, NULL, NULL, 0,
-	    NULL, NULL)) != NULL) {
+	if ((mi = menu_filter(sc, &menuq, NULL, NULL, CWM_MENU_LIST,
+	    NULL, search_print_client)) != NULL) {
 		cc = (struct client_ctx *)mi->ctx;
 		client_unhide(cc);
 		if (old_cc != NULL)
@@ -252,13 +224,15 @@ mousefunc_menu_cmd(struct client_ctx *cc, union arg *arg)
 	struct menu_q		 menuq;
 
 	TAILQ_INIT(&menuq);
-	TAILQ_FOREACH(cmd, &Conf.cmdq, entry)
-		menuq_add(&menuq, cmd, "%s", cmd->name);
-	if (TAILQ_EMPTY(&menuq))
-		return;
+	TAILQ_FOREACH(cmd, &Conf.cmdq, entry) {
+		if ((strcmp(cmd->name, "lock") == 0) ||
+		    (strcmp(cmd->name, "term") == 0))
+			continue;
+		menuq_add(&menuq, cmd, NULL);
+	}
 
-	if ((mi = menu_filter(sc, &menuq, NULL, NULL, 0,
-	    NULL, NULL)) != NULL)
+	if ((mi = menu_filter(sc, &menuq, NULL, NULL, CWM_MENU_LIST,
+	    NULL, search_print_cmd)) != NULL)
 		u_spawn(((struct cmd *)mi->ctx)->path);
 
 	menuq_clear(&menuq);
