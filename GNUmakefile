@@ -1,7 +1,7 @@
 BINDIR = /usr/bin
 MANDIR = /usr/share/man
 
-CFLAGS = -O2 -I /usr/include/freetype2
+CFLAGS = -O2 -I /usr/include/freetype2 -D_GNU_SOURCE
 LDFLAGS =
 LIBS = -lbsd -lXft -lXrender -lX11 -lxcb -lXau -lXdmcp -lfontconfig -lexpat -lfreetype -lz -lXinerama -lXrandr -lXext
 YACC = yacc
