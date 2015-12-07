@@ -38,6 +38,7 @@
  *  @(#)queue.h 8.5 (Berkeley) 8/20/94
  */
 
+#include <bsd/stdlib.h>
 #include <bsd/string.h>
 
 #define TAILQ_END(head)         NULL
